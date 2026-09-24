@@ -24,6 +24,20 @@ export type LogLine = { stream: 'stdout' | 'stderr'; line: string; at: number };
 
 type BundleMeta = { executable: string; bundleId: string; name: string };
 
+/**
+ * Resolves a Windows shortcut (.lnk) to its target and arguments, so a Start
+ * Menu entry can be the configured app path. Uses the shell's own COM object
+ * through PowerShell rather than parsing the binary format.
+ */
+async function readShortcut(lnkPath: string): Promise<{ executable: string; args: string[] }> {
+  const script = `$s = (New-Object -ComObject WScript.Shell).CreateShortcut(${JSON.stringify(lnkPath)}); ` +
+    `[Console]::Out.Write((ConvertTo-Json @{ target = $s.TargetPath; args = $s.Arguments }))`;
+  const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true });
+  const info = JSON.parse(stdout) as { target?: string; args?: string };
+  if (!info.target) throw new Error(`${lnkPath} has no target`);
+  return { executable: info.target, args: info.args ? info.args.match(/"[^"]*"|\S+/g)?.map((a) => a.replace(/^"|"$/g, '')) ?? [] : [] };
+}
+
 /** Reads the fields we need out of a .app bundle's Info.plist. */
 async function readBundle(appPath: string): Promise<BundleMeta> {
   const plist = join(appPath, 'Contents', 'Info.plist');
@@ -128,15 +142,26 @@ export class DesktopApp {
     let exe = appPath;
     let bundleId = '';
     let name = basename(appPath);
+    const args = [...(opts.args ?? [])];
 
     if (appPath.endsWith('.app')) {
       const meta = await readBundle(appPath);
       exe = meta.executable;
       bundleId = meta.bundleId;
       name = meta.name;
+    } else if (/\.lnk$/i.test(appPath)) {
+      const link = await readShortcut(appPath);
+      exe = link.executable;
+      args.unshift(...link.args);
+      // Name and id come from the running process; the shortcut's name is a guess.
+      name = '';
+    } else if (/\.exe$/i.test(appPath)) {
+      // A bare executable: its display name is the version resource's
+      // FileDescription and its "bundle id" its path or AppUserModelID, both
+      // of which the driver reads off the running process below.
+      name = '';
     }
 
-    const args = [...(opts.args ?? [])];
     let userDataDir: string | null = null;
     if (opts.isolatedUserData) {
       userDataDir = await mkdtemp(join(tmpdir(), 'dtf-userdata-'));

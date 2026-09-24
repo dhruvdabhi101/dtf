@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    DTF Fixture (Windows) — the WinForms twin of fixtures/tray-app/main.swift.
+    Same tray menu, window title, control identifiers, menus, dialogs, URL
+    scheme and log lines, so the framework's suite in tests/ runs unchanged.
+
+    The TFM pins a Windows SDK version so the WinRT toast API
+    (Windows.UI.Notifications) is projected; everything else is plain WinForms.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>DTFFixture</AssemblyName>
+    <RootNamespace>DtfFixture</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RollForward>Major</RollForward>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**</DefaultItemExcludes>
+
+    <!-- What the OS shows as the app's name: FileDescription drives Task Manager and toast attribution. -->
+    <AssemblyTitle>DTF Fixture</AssemblyTitle>
+    <Product>DTF Fixture</Product>
+    <Company>dtf</Company>
+    <Version>1.0.0</Version>
+    <InformationalVersion>1.0</InformationalVersion>
+  </PropertyGroup>
+
+</Project>

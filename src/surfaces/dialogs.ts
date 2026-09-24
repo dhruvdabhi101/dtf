@@ -33,6 +33,8 @@ export class DialogHandle {
   get buttons() { return this.#dialog.buttons.map((b) => b.title); }
   get owningApp() { return this.#dialog.app; }
   get root() { return this.#dialog.root; }
+  /** False for a prompt the OS isolates from automation (a UAC prompt). */
+  get automatable() { return this.#dialog.automatable !== false; }
 
   find(selector: SelectorPath): Locator {
     return new Locator(this.#driver, async () => ({ ref: this.#dialog.ref }), selector);
@@ -71,19 +73,16 @@ export class DialogHandle {
   }
 
   /**
-   * Types a path into a file panel.
+   * Types a path into a file panel and confirms it.
    *
-   * Uses the Go-to-folder sheet (Cmd+Shift+G) rather than navigating the file
-   * browser, because that is stable across macOS versions and view modes.
+   * The mechanics differ per OS (macOS uses the Go-to-folder sheet, Windows
+   * the filename box), so the driver does the typing.
    */
   async setFilePath(path: string): Promise<void> {
     if (this.kind !== 'filePanel' && !/save|open/i.test(this.title)) {
       throw new AssertionError(`setFilePath is only meaningful on a file panel; this is a ${this.kind}`);
     }
-    await this.#driver.key('cmd+shift+g');
-    await new Promise((r) => setTimeout(r, 400));
-    await this.#driver.type(path);
-    await this.#driver.key('enter');
+    await this.#driver.dialogSetFilePath(this.#dialog.ref, path);
   }
 
   async shouldHaveText(expected: string | RegExp): Promise<void> {

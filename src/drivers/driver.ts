@@ -89,6 +89,12 @@ export interface Driver {
 
   // Native dialogs, sheets, and file panels
   dialogList(pid?: number): Promise<Dialog[]>;
+  /**
+   * Types a path into a file open/save panel and confirms it. How that is
+   * done is entirely platform-specific (a Go-to-Folder sheet on macOS, the
+   * filename box on Windows), which is why it lives behind the driver.
+   */
+  dialogSetFilePath(ref: string, path: string): Promise<void>;
 
   // Raw input
   key(combo: string): Promise<void>;
@@ -142,4 +148,10 @@ export interface Driver {
   // App privacy permissions (the ones the *app under test* asks the user for)
   resetPermission(service: string, bundleId: string): Promise<void>;
   readPermission(service: string, bundleId: string): Promise<'allowed' | 'denied' | 'unset' | 'unknown'>;
+  /**
+   * Grants or denies a permission without a prompt. Optional because not
+   * every OS allows it: Windows keeps consent in writable registry keys,
+   * macOS keeps it in the SIP-protected TCC database.
+   */
+  setPermission?(service: string, bundleId: string, state: 'allowed' | 'denied'): Promise<void>;
 }

@@ -186,6 +186,17 @@ export class MacOSDriver implements Driver {
 
   dialogList(pid?: number) { return this.#helper.call<Dialog[]>('dialog.list', pid ? { pid } : {}); }
 
+  /**
+   * Uses the Go-to-folder sheet (Cmd+Shift+G) rather than navigating the file
+   * browser, because that is stable across macOS versions and view modes.
+   */
+  async dialogSetFilePath(_ref: string, path: string) {
+    await this.#helper.call('key', { combo: 'cmd+shift+g' });
+    await new Promise((r) => setTimeout(r, 400));
+    await this.#helper.call('type', { text: path, delayMs: 8 });
+    await this.#helper.call('key', { combo: 'enter' });
+  }
+
   // ── Input ────────────────────────────────────────────────────────────────
 
   async key(combo: string) { await this.#helper.call('key', { combo }); }

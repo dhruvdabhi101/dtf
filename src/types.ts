@@ -109,6 +109,12 @@ export type Dialog = {
   buttons: { ref: string; title: string; enabled: boolean }[];
   texts: string[];
   root: AXNode;
+  /**
+   * False for a prompt the OS deliberately isolates from automation — a UAC
+   * elevation prompt on the Windows secure desktop. It is listed so a test
+   * fails with the reason instead of waiting for a dialog it can never drive.
+   */
+  automatable?: boolean;
 };
 
 export type WindowInfo = {
@@ -140,7 +146,7 @@ export type AppInfo = {
 export type MouseButton = 'left' | 'right' | 'middle';
 
 export type LaunchOptions = {
-  /** Path to a .app bundle (macOS), .exe (Windows), or a bare executable. */
+  /** Path to a .app bundle (macOS), .exe or .lnk (Windows), or a bare executable. */
   path: string;
   args?: string[];
   env?: Record<string, string>;

@@ -12,25 +12,36 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  * Builds the native driver on install.
  *
  * A build failure is a warning, not an install failure: the package should still
- * install on a machine without the Xcode tools (or on a non-macOS box doing a
+ * install on a machine without the toolchain (or on an unsupported OS doing a
  * lockfile install), and `dtf doctor` will explain what is missing.
  */
-if (process.platform !== 'darwin') {
-  console.log('dtf: skipping native build — only the macOS driver is implemented today.');
+const BUILDS = {
+  darwin: {
+    script: join(ROOT, 'native', 'macos', 'build.sh'),
+    run: (script) => run('/bin/bash', [script]),
+    hint: (script) => `Install the Xcode Command Line Tools (xcode-select --install), then run:\n     bash ${script}`,
+  },
+  win32: {
+    script: join(ROOT, 'native', 'windows', 'build.ps1'),
+    run: (script) => run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true }),
+    hint: (script) => `Install the .NET 8 SDK (winget install Microsoft.DotNet.SDK.8), then run:\n     powershell -ExecutionPolicy Bypass -File ${script}`,
+  },
+};
+
+const build = BUILDS[process.platform];
+if (!build) {
+  console.log(`dtf: skipping native build — no driver for ${process.platform} (see docs/WINDOWS.md for how one is added).`);
   process.exit(0);
 }
-
-const script = join(ROOT, 'native', 'macos', 'build.sh');
-if (!existsSync(script)) process.exit(0);
+if (!existsSync(build.script)) process.exit(0);
 
 try {
-  const { stdout } = await run('/bin/bash', [script]);
+  const { stdout } = await build.run(build.script);
   process.stdout.write(stdout);
 } catch (err) {
   console.warn(
     'dtf: could not build the native driver.\n' +
-      '     Install the Xcode Command Line Tools (xcode-select --install), then run:\n' +
-      `     bash ${script}\n` +
-      `     ${err.stderr ?? err.message}`,
+      `     ${build.hint(build.script)}\n` +
+      `     ${err.stderr ?? err.stdout ?? err.message}`,
   );
 }

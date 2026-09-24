@@ -1,5 +1,9 @@
 node_modules/
 dtf-artifacts/
 native/macos/bin/
+native/windows/bin/
+native/windows/obj/
 fixtures/tray-app/DTFFixture.app/
+fixtures/tray-app-win/bin/
+fixtures/tray-app-win/obj/
 *.log

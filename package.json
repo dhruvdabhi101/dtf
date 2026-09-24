@@ -13,7 +13,8 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "build:native": "./native/macos/build.sh",
+    "build:native": "node ./scripts/postinstall.mjs",
+    "build:fixture": "node ./scripts/build-fixture.mjs",
     "postinstall": "node ./scripts/postinstall.mjs",
     "doctor": "node ./src/cli.ts doctor",
     "test": "node ./src/cli.ts run tests",

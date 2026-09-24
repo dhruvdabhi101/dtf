@@ -6,7 +6,11 @@ import { defineConfig } from './src/index.ts';
  */
 export default defineConfig({
   app: {
-    path: 'fixtures/tray-app/DTFFixture.app',
+    // One path per platform: the Swift bundle on macOS, the WinForms twin on Windows.
+    path: {
+      darwin: 'fixtures/tray-app/DTFFixture.app',
+      win32: 'fixtures/tray-app-win/bin/DTFFixture.exe',
+    },
   },
   lifecycle: 'per-file',
   testMatch: ['tests/**/*.spec.ts'],

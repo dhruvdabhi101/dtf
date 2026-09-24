@@ -1,0 +1,76 @@
+name: Desktop OS tests (Windows)
+
+# These are real GUI tests. They need a logged-in, unlocked Windows desktop
+# session: UI Automation works from a service session, but synthetic input
+# does not, and toasts are never shown there. GitHub-hosted Windows runners
+# run as a service, so this job wants a self-hosted machine with auto-logon
+# and the runner started from that interactive session (a scheduled task at
+# logon, not a Windows service). See docs/WINDOWS.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # One at a time, always. These tests drive the shared desktop: a second job on
+  # the same machine moves the mouse out from under the first one.
+  group: desktop-tests-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  os-tests-windows:
+    runs-on: [self-hosted, Windows, gui]
+    timeout-minutes: 30
+
+    env:
+      DTF_AUTH_TOKEN: ${{ secrets.DTF_CI_AUTH_TOKEN }}
+      DTF_AUTH_EMAIL: ci@example.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install
+        run: npm ci
+
+      # Both are self-contained single-file executables, so the runner needs the
+      # SDK only to build them, never to run them.
+      - name: Build native driver
+        run: npm run build:native
+
+      - name: Build the app under test
+        run: npm run build:fixture
+
+      # Fail fast and legibly. Nearly every red desktop suite is an environment
+      # problem — a locked session, Focus Assist on, an elevated runner — and
+      # this turns twenty confusing failures into one clear line.
+      - name: Preflight
+        run: npx dtf doctor
+
+      - name: Run OS-level tests
+        run: npx dtf run tests --retries 1
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtf-artifacts-windows-${{ github.run_id }}
+          path: dtf-artifacts/
+          retention-days: 14
+
+      # The suite leaves nothing behind on a clean exit, but a killed job can.
+      # Without this the next run inherits a stray app holding a tray slot (and,
+      # for the single-instance fixture, its protocol activations).
+      - name: Clean up strays
+        if: always()
+        shell: pwsh
+        run: Get-Process DTFFixture, dtfd-windows -ErrorAction SilentlyContinue | Stop-Process -Force

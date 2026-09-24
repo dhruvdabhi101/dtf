@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    dtfd-windows: the Windows native driver for dtf.
+
+    Framework-dependent single-file publish keeps the binary small (~1MB); the
+    .NET 8 runtime is present on any machine that has the SDK needed to build
+    it. RollForward lets a newer runtime run it unchanged.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>dtfd-windows</AssemblyName>
+    <RootNamespace>Dtf</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RollForward>Major</RollForward>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The raw UI Automation COM API (IUIAutomation, IUIAutomationElement, ...)
+      rather than System.Windows.Automation: the managed wrapper caches element
+      state in ways that produce exactly the stale-tree bugs the README warns
+      about. Interop.UIAutomationClient is the tlbimp output for the UIA
+      typelib that ships with Windows (4M+ downloads); a <COMReference> would
+      generate the same assembly but needs the .NET Framework MSBuild from
+      Visual Studio, which a plain `dotnet` SDK install does not have.
+    -->
+    <PackageReference Include="Interop.UIAutomationClient" Version="10.19041.0" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
+  </ItemGroup>
+
+</Project>

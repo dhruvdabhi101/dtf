@@ -15,7 +15,9 @@ describe('Native dialogs', () => {
   test('an alert sheet exposes its message and buttons', async ({ app }) => {
     await app.find('button[title="Show Alert"]').click();
 
-    const dialog = await app.dialogs.shouldAppear({ kind: 'sheet' });
+    // AppKit attaches alerts to their window as sheets; Windows has no sheet
+    // and shows a task dialog window instead. The kind is the only difference.
+    const dialog = await app.dialogs.shouldAppear({ kind: process.platform === 'darwin' ? 'sheet' : 'dialog' });
     await dialog.shouldHaveText('Are you sure?');
     await dialog.shouldHaveButtons('Confirm', 'Cancel');
     await dialog.click('Cancel');
