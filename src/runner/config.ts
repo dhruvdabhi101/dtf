@@ -1,0 +1,102 @@
+import { pathToFileURL } from 'node:url';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import type { LaunchOptions } from '../types.ts';
+import type { ReporterName } from './reporter.ts';
+
+/**
+ * An app path, either one string or one per platform. The per-platform form is
+ * what lets a single suite target the `.app` on macOS and the `.exe` on Windows.
+ */
+export type AppPath = string | Partial<Record<'darwin' | 'win32' | 'linux', string>>;
+
+export type AppConfig = Omit<LaunchOptions, 'path'> & { path: AppPath };
+
+export type DTFConfig = {
+  /** The app under test. Omit to write tests that attach to running apps instead. */
+  app?: AppConfig;
+  /**
+   * `per-file` relaunches the app once per test file (fast, but state leaks
+   * between tests in the file). `per-test` is slower and fully isolated.
+   * `manual` launches nothing and hands tests the driver only.
+   */
+  lifecycle?: 'per-file' | 'per-test' | 'manual';
+  testMatch?: string[];
+  artifactsDir?: string;
+  timeoutMs?: number;
+  retries?: number;
+  /** Capture a screenshot automatically whenever a test fails. */
+  screenshotOnFailure?: boolean;
+  /** Clear stray notifications and modals before each test. */
+  cleanSlate?: boolean;
+  /** Reset these privacy grants before each launch, to test first-run flows. */
+  resetPermissions?: string[];
+  /**
+   * Attach to an app that is already running instead of launching one. Useful
+   * for login items and apps started by an installer. An attached app is left
+   * running when the tests finish.
+   */
+  attach?: { pid?: number; bundleId?: string; name?: string };
+  /** One reporter or several: `['pretty', 'junit']`. */
+  reporter?: ReporterName | ReporterName[];
+};
+
+/** The config after loading: the app path is resolved for this platform. */
+export type ResolvedConfig = Omit<DTFConfig, 'app'> & { app?: LaunchOptions; configFile?: string };
+
+export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'attach'>> = {
+  lifecycle: 'per-file',
+  testMatch: ['**/*.spec.ts', '**/*.test.ts'],
+  artifactsDir: 'dtf-artifacts',
+  timeoutMs: 60_000,
+  retries: 0,
+  screenshotOnFailure: true,
+  cleanSlate: true,
+  reporter: 'pretty',
+};
+
+const CONFIG_NAMES = ['dtf.config.ts', 'dtf.config.mjs', 'dtf.config.js'];
+
+/**
+ * Loads the config from `dir`, or returns undefined if there is none.
+ *
+ * Relative app paths resolve against the config file's own directory, so a test
+ * directory can be moved without rewriting its paths.
+ */
+export async function loadConfigFrom(dir: string): Promise<ResolvedConfig | undefined> {
+  for (const name of CONFIG_NAMES) {
+    const path = join(dir, name);
+    if (!existsSync(path)) continue;
+    const mod = await import(`${pathToFileURL(path).href}?t=${Date.now()}`);
+    const cfg = (mod.default ?? mod.config ?? {}) as DTFConfig;
+    return { ...DEFAULTS, ...cfg, app: resolveApp(cfg.app, dir), configFile: path };
+  }
+  return undefined;
+}
+
+/** Picks this platform's app path and makes it absolute. */
+export function resolveApp(app: AppConfig | undefined, dir: string, platform = process.platform): LaunchOptions | undefined {
+  if (!app) return undefined;
+  const raw = typeof app.path === 'string' ? app.path : app.path[platform as 'darwin' | 'win32' | 'linux'];
+  if (!raw) return undefined;
+  return { ...app, path: resolve(dir, raw) };
+}
+
+/**
+ * Resolves the config for a run.
+ *
+ * A config next to the tests wins over one in the working directory, so a suite
+ * can live beside the app it tests and still be run from anywhere.
+ */
+export async function loadConfig(cwd = process.cwd(), testDir?: string): Promise<ResolvedConfig> {
+  if (testDir && testDir !== cwd) {
+    const local = await loadConfigFrom(testDir);
+    if (local) return local;
+  }
+  return (await loadConfigFrom(cwd)) ?? { ...DEFAULTS };
+}
+
+/** Identity helper that gives editors full type-checking on the config file. */
+export function defineConfig(cfg: DTFConfig): DTFConfig {
+  return cfg;
+}

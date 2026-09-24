@@ -1,0 +1,184 @@
+import type { Driver } from '../drivers/driver.ts';
+import type { Dialog, SelectorPath } from '../types.ts';
+import { Locator } from './locator.ts';
+import { waitFor } from '../core/wait.ts';
+import { AssertionError } from '../core/errors.ts';
+
+export type DialogQuery = {
+  title?: string | RegExp;
+  /** Matches any static text inside the dialog — alert bodies live here. */
+  text?: string | RegExp;
+  kind?: Dialog['kind'];
+  /** Include dialogs owned by other processes (file panels, system prompts). */
+  anyApp?: boolean;
+};
+
+function matches(value: string, pattern: string | RegExp): boolean {
+  return pattern instanceof RegExp ? pattern.test(value) : value.toLowerCase().includes(pattern.toLowerCase());
+}
+
+/** A live native modal: an alert, a sheet, or a file open/save panel. */
+export class DialogHandle {
+  #driver: Driver;
+  #dialog: Dialog;
+
+  constructor(driver: Driver, dialog: Dialog) {
+    this.#driver = driver;
+    this.#dialog = dialog;
+  }
+
+  get kind() { return this.#dialog.kind; }
+  get title() { return this.#dialog.title; }
+  get texts() { return this.#dialog.texts; }
+  get buttons() { return this.#dialog.buttons.map((b) => b.title); }
+  get owningApp() { return this.#dialog.app; }
+  get root() { return this.#dialog.root; }
+
+  find(selector: SelectorPath): Locator {
+    return new Locator(this.#driver, async () => ({ ref: this.#dialog.ref }), selector);
+  }
+
+  /** Presses a button by its visible title. */
+  async click(buttonTitle: string): Promise<void> {
+    const btn = this.#dialog.buttons.find((b) => b.title === buttonTitle)
+      ?? this.#dialog.buttons.find((b) => b.title.toLowerCase() === buttonTitle.toLowerCase());
+    if (!btn) {
+      throw new AssertionError(
+        `dialog '${this.#dialog.title || this.#dialog.kind}' has no button '${buttonTitle}'. ` +
+          `Available: ${JSON.stringify(this.buttons)}`,
+      );
+    }
+    if (!btn.enabled) throw new AssertionError(`dialog button '${buttonTitle}' is disabled`);
+    await this.#driver.elementAction(btn.ref, 'AXPress');
+  }
+
+  /**
+   * Dismisses the modal without accepting it.
+   *
+   * Prefers the dialog's own cancel control and only falls back to Escape.
+   * Escape is a keystroke sent to whatever currently has keyboard focus, so it
+   * silently does nothing when the app under test is not frontmost — a very
+   * easy way to write a test that passes locally and hangs in CI.
+   */
+  async dismiss(): Promise<void> {
+    const cancelTitles = ['Cancel', "Don't Save", 'Close', 'No', 'Dismiss'];
+    const cancel = this.#dialog.buttons.find((b) => cancelTitles.includes(b.title) && b.enabled);
+    if (cancel) {
+      await this.#driver.elementAction(cancel.ref, 'AXPress');
+      return;
+    }
+    await this.#driver.key('escape');
+  }
+
+  /**
+   * Types a path into a file panel.
+   *
+   * Uses the Go-to-folder sheet (Cmd+Shift+G) rather than navigating the file
+   * browser, because that is stable across macOS versions and view modes.
+   */
+  async setFilePath(path: string): Promise<void> {
+    if (this.kind !== 'filePanel' && !/save|open/i.test(this.title)) {
+      throw new AssertionError(`setFilePath is only meaningful on a file panel; this is a ${this.kind}`);
+    }
+    await this.#driver.key('cmd+shift+g');
+    await new Promise((r) => setTimeout(r, 400));
+    await this.#driver.type(path);
+    await this.#driver.key('enter');
+  }
+
+  async shouldHaveText(expected: string | RegExp): Promise<void> {
+    const joined = this.#dialog.texts.join(' | ');
+    if (!matches(joined, expected)) {
+      throw new AssertionError(
+        `expected dialog to contain ${expected}, got: ${JSON.stringify(this.#dialog.texts)}`,
+        expected, this.#dialog.texts,
+      );
+    }
+  }
+
+  async shouldHaveButtons(...titles: string[]): Promise<void> {
+    const missing = titles.filter((t) => !this.buttons.includes(t));
+    if (missing.length) {
+      throw new AssertionError(
+        `dialog is missing button(s) ${JSON.stringify(missing)}; it has ${JSON.stringify(this.buttons)}`,
+      );
+    }
+  }
+}
+
+/**
+ * Native modals.
+ *
+ * Covers the three places a modal can actually live, so a test never has to
+ * care which the app happened to produce:
+ *   - a sheet attached to one of the app's own windows,
+ *   - a standalone dialog window,
+ *   - a window belonging to a *different* process — a sandboxed app's save
+ *     panel is served by the system's open/save panel XPC service, which is why
+ *     naive "look at the app's windows" approaches miss it entirely.
+ */
+export class DialogSurface {
+  #driver: Driver;
+  #pid: () => number;
+
+  constructor(driver: Driver, pid: () => number) {
+    this.#driver = driver;
+    this.#pid = pid;
+  }
+
+  async list(anyApp = false): Promise<Dialog[]> {
+    return this.#driver.dialogList(anyApp ? undefined : this.#pid());
+  }
+
+  async waitFor(query: DialogQuery = {}, opts: { timeoutMs?: number } = {}): Promise<DialogHandle> {
+    const dialog = await waitFor(async () => {
+      const list = await this.list(query.anyApp);
+      return list.find((d) => {
+        if (query.kind && d.kind !== query.kind) return false;
+        if (query.title && !matches(d.title, query.title)) return false;
+        if (query.text && !d.texts.some((t) => matches(t, query.text!))) return false;
+        return true;
+      });
+    }, {
+      timeoutMs: opts.timeoutMs ?? 10_000,
+      intervalMs: 200,
+      description: `dialog ${JSON.stringify(query)}`,
+    });
+    return new DialogHandle(this.#driver, dialog);
+  }
+
+  async shouldAppear(query: DialogQuery = {}, opts: { timeoutMs?: number } = {}): Promise<DialogHandle> {
+    try {
+      return await this.waitFor(query, opts);
+    } catch {
+      const all = await this.list(true);
+      throw new AssertionError(
+        `expected a dialog matching ${JSON.stringify(query)}.\n` +
+          `Currently open: ${JSON.stringify(all.map((d) => ({ kind: d.kind, app: d.app, title: d.title, buttons: d.buttons.map((b) => b.title) })), null, 2)}`,
+      );
+    }
+  }
+
+  async shouldNotAppear(query: DialogQuery = {}, opts: { withinMs?: number } = {}): Promise<void> {
+    const found = await this.waitFor(query, { timeoutMs: opts.withinMs ?? 2500 }).catch(() => undefined);
+    if (found) throw new AssertionError(`expected no dialog matching ${JSON.stringify(query)}, but '${found.title}' is open`);
+  }
+
+  /** Waits for any modal and presses the given button. The one-liner form. */
+  async accept(buttonTitle = 'OK', query: DialogQuery = {}): Promise<void> {
+    const d = await this.waitFor(query);
+    await d.click(buttonTitle);
+  }
+
+  async dismissAll(): Promise<number> {
+    let n = 0;
+    for (let i = 0; i < 10; i++) {
+      const list = await this.list(true);
+      if (!list.length) break;
+      await this.#driver.key('escape');
+      await new Promise((r) => setTimeout(r, 250));
+      n++;
+    }
+    return n;
+  }
+}

@@ -1,0 +1,5 @@
+node_modules/
+dtf-artifacts/
+native/macos/bin/
+fixtures/tray-app/DTFFixture.app/
+*.log

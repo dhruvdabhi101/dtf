@@ -1,0 +1,32 @@
+{
+  "name": "dtf",
+  "version": "0.1.0",
+  "description": "OS-level end-to-end testing framework for desktop apps \u2014 tray, notifications, native dialogs, permissions, menus and windows.",
+  "type": "module",
+  "bin": {
+    "dtf": "./src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build:native": "./native/macos/build.sh",
+    "postinstall": "node ./scripts/postinstall.mjs",
+    "doctor": "node ./src/cli.ts doctor",
+    "test": "node ./src/cli.ts run tests",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "files": [
+    "src",
+    "native",
+    "scripts"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "5.9"
+  }
+}

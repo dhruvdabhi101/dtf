@@ -1,0 +1,66 @@
+name: Desktop OS tests
+
+# These are real GUI tests. They need a logged-in macOS desktop session, which
+# GitHub-hosted runners cannot reliably provide — see docs/CI.md for why. Run
+# them on a self-hosted Mac provisioned with scripts/ci-setup-macos.sh.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # One at a time, always. These tests drive the shared desktop: a second job on
+  # the same machine moves the mouse out from under the first one.
+  group: desktop-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  os-tests:
+    runs-on: [self-hosted, macOS, gui]
+    timeout-minutes: 30
+
+    env:
+      # A token minted for a CI service account, used to complete sign-in via the
+      # callback deep link instead of driving the identity provider's login page.
+      DTF_AUTH_TOKEN: ${{ secrets.DTF_CI_AUTH_TOKEN }}
+      DTF_AUTH_EMAIL: ci@example.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install
+        run: npm ci
+
+      - name: Build native driver
+        run: npm run build:native
+
+      # Fail fast and legibly. Nearly every red desktop suite is an environment
+      # problem, and this turns twenty confusing failures into one clear line.
+      - name: Preflight
+        run: npx dtf doctor
+
+      - name: Build the app under test
+        run: npm run package:mac
+
+      - name: Run OS-level tests
+        run: npx dtf run tests --retries 1
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtf-artifacts-${{ github.run_id }}
+          path: dtf-artifacts/
+          retention-days: 14
+
+      # The suite leaves nothing behind on a clean exit, but a killed job can.
+      # Without this the next run inherits a stray app holding a tray slot.
+      - name: Clean up strays
+        if: always()
+        run: pkill -f 'YourApp.app/Contents/MacOS' || true
