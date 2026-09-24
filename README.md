@@ -3,7 +3,9 @@
 Point it at a `.app` (or, once the Windows driver lands, an `.exe`) and write tests
 against the parts of a desktop app that no in-process test harness can see:
 **tray icons, notification banners, native dialogs and file panels, permission
-prompts, menu bars, and window lifecycle.**
+prompts, menu bars, and window lifecycle.** You can write the tests by hand,
+or record them by using the app while the **Studio** turns your clicks and
+typing into code.
 
 ```ts
 test('closing the window keeps the app in the tray', async ({ app }) => {
@@ -57,8 +59,7 @@ Requires **macOS**, **Node ≥ 22.18**, and the **Xcode Command Line Tools**
 (`xcode-select --install`) to compile the native driver.
 
 ```bash
-npm install
-npm run build:native
+npm install          # also builds the native helper
 npx dtf doctor
 ```
 
@@ -85,7 +86,7 @@ screenshots.
 
 ```bash
 npx dtf init      # writes dtf.config.ts and tests/os.spec.ts
-npx dtf run
+npx dtf studio    # opens the Studio in your browser
 ```
 
 ```ts
@@ -94,18 +95,106 @@ import { defineConfig } from 'dtf';
 
 export default defineConfig({
   app: {
-    path: '/Applications/YourApp.app',
+    // One path per platform lets the same suite run on macOS and Windows.
+    path: {
+      darwin: '/Applications/YourApp.app',
+      win32: 'C:\\Program Files\\YourApp\\YourApp.exe',
+    },
     isolatedUserData: true,          // throwaway profile per run
     userDataArg: '--user-data-dir=', // Electron's flag
   },
   lifecycle: 'per-file',             // or 'per-test' for full isolation
   retries: 1,
   screenshotOnFailure: true,
+  reporter: ['pretty', 'junit'],     // junit.xml for your CI's test tab
 });
 ```
 
+`app.path` can also be a plain string. To test an app that is already running
+(a login item, say) instead of launching one, use `attach: { bundleId: '…' }`.
+An attached app is left running when the tests finish.
+
 Test files are plain TypeScript. Node runs them directly via native type
 stripping, so there is **no build step and no transpiler config**.
+
+## Studio
+
+```bash
+npx dtf studio
+```
+
+A local web UI for the whole loop. It needs nothing beyond the package itself:
+no build step, no network, and it runs wherever `dtf` does.
+
+- **Tests:** every spec file and test in the suite, with each test's status
+  from its last run. Select a test to see its source (the failing line is
+  highlighted) and its last result, including the failure screenshot, the
+  accessibility tree dump and the app log. Run everything, one file, or one
+  test (<kbd>⌘/Ctrl</kbd>+<kbd>↵</kbd>), and watch the output live.
+- **Record:** launch the configured app or attach to a running one, then use
+  it. Every click, keystroke, tray and menu interaction becomes a step, with
+  the generated code updating next to it. See [Recording](#recording).
+- **Inspect:** browse any app's accessibility tree, see each element's
+  attributes and suggested selectors, test a selector against the live UI,
+  or **pick an element from the screen**.
+- **Runs:** history, with results and artifacts for every run.
+- **Doctor:** the `dtf doctor` checks, live.
+
+The server listens on `127.0.0.1` only. Every API call needs a token that is
+generated per launch, and requests with a foreign `Host` header are refused,
+which blocks DNS-rebinding attacks. File access is confined to the project
+directory. `--port` and `--no-open` do what they say.
+
+## Recording
+
+Recording turns real input into readable tests. Using the fixture app, a
+recording of "open the tray, click Show Window, click Increment, type into the
+field, check the counter" comes out as:
+
+```ts
+test('increment and type', async ({ app }) => {
+  await app.tray.click('Show Window');
+  const dtfFixtureWindow = app.windows.get({ title: 'DTF Fixture' });
+  await dtfFixtureWindow.find('#btn-increment').click();
+  await dtfFixtureWindow.find('#demo-field').fill('hello');
+  await dtfFixtureWindow.find('#counter-label').shouldHaveText('Count: 1');
+});
+```
+
+What the recorder does to get there:
+
+- **It records intent, not coordinates.** A tray click followed by a menu item
+  becomes one `app.tray.click('Show Window')`. Clicking through a menu keeps
+  only the leaf item. Keystrokes into a field become a single `fill()`, with
+  backspaces applied.
+- **Selectors are checked against the live UI** while you record. Each
+  candidate (accessibility id, then role + label, then scoped under a labelled
+  ancestor) is tried against the running app, and the first one that matches
+  exactly one element wins. The others are offered as alternatives in the
+  step editor. Per-launch ids such as AppKit's `_NS:123` are never used.
+- **Shortcuts are portable.** ⌘S on macOS and Ctrl+S on Windows are both
+  recorded as `mod+s`.
+- **Only the app under test is recorded.** Clicks in the Studio, your terminal
+  or anything else are ignored. Notifications and file panels are the
+  exception: they are hosted by system processes, and are recorded anyway.
+- **Assertions:** click **Assert on element**, then click anything in the app.
+  That click is swallowed, so the app never receives it, and you choose what
+  to check: visible, has its current text, enabled or disabled, gone. While
+  you record, the Studio also notices new notifications, dialogs and windows,
+  and offers each one as a one-click check.
+- **Edit afterwards:** change selectors, text and menu paths, reorder or
+  delete steps, and add checks, waits or comments. Then save the result as a
+  new spec file, append it to an existing one, or **Replay** it immediately.
+
+From a terminal, for example on a machine you reach over SSH or VNC:
+
+```bash
+npx dtf record tests/checkout.spec.ts --launch        # or --bundle com.example.app to attach
+```
+
+Recording needs the same Accessibility permission as running tests. On
+recent macOS versions it also needs **Input Monitoring** for the terminal or
+process that runs `dtf`.
 
 ## Writing tests
 
@@ -283,6 +372,15 @@ Artifacts on failure land in `dtf-artifacts/`: a screenshot, a JSON dump of the
 full accessibility tree, and the app's log. Those three together are what let you
 tell "wrong state" apart from "wrong selector" after the fact.
 
+Reporters combine: `--reporter pretty,junit` prints to the console and writes
+`dtf-artifacts/junit.xml`, which GitHub, GitLab, Jenkins and Azure DevOps can
+all render. `json` writes `results.json`. `stream` emits one JSON event per
+line, and is what the Studio consumes. Pressing Ctrl+C once stops after the
+current test and closes the app cleanly; pressing it twice exits immediately.
+
+`.github/workflows/ci.yml` runs the typecheck and unit tests on macOS, Windows
+and Linux on every push. None of that needs a desktop session.
+
 ## Debugging
 
 ```bash
@@ -293,30 +391,57 @@ dtf inspect dialogs                           # open dialogs, sheets, file panel
 dtf inspect menu --bundle com.example.app
 ```
 
-`dtf inspect tree` is the fastest way to write a selector: dump the tree, find the
-node, use its `identifier` or `title`.
+`dtf inspect tree` is the fastest way to write a selector from a terminal: dump
+the tree, find the node, use its `identifier` or `title`. The Studio's Inspect
+tab does the same interactively, and can pick an element straight off the
+screen.
+
+```bash
+dtf list                                      # every test the suite declares, with line numbers
+dtf run --file tests/tray.spec.ts --line 12   # exactly one test
+```
+
+## Developing dtf
+
+```bash
+npm run check          # typecheck + unit tests (no GUI needed; runs on any OS)
+npm run build:fixture  # builds fixtures/tray-app/DTFFixture.app
+npm test               # the OS-level suite against the fixture (moves the mouse)
+npm run studio
+```
+
+Unit tests (`test/unit/`) cover the platform-neutral core: the selector DSL,
+selector generation, step building, codegen (including that generated specs
+load in Node), reporters, config resolution, and the Studio server's security
+guards. The OS-level suite (`tests/`) is the acceptance test for each
+platform's driver.
 
 ## Architecture
 
 ```
+Studio (browser UI) ──HTTP/SSE──> studio server ──┬─ spawns `dtf run` per run
+                                                  └─ recorder + inspector
 your tests  ─┐
              ├─ surfaces (tray, notifications, dialogs, menu, windows, permissions)
 runner       ─┤     platform-agnostic; assertions poll until a deadline
-             ├─ Driver interface
-             └─ macOS driver ──JSON-lines over stdio──> dtfd-macos (Swift)
-                                                          AXUIElement + CGEvent
+recorder     ─┤     steps · selectors · codegen — platform-agnostic
+             ├─ Driver interface   (src/drivers/driver.ts)
+             ├─ macOS driver ──JSON lines over stdio──> dtfd-macos (Swift: AXUIElement, CGEvent, event tap)
+             └─ Windows driver ─ same protocol ─────> dtfd-windows (C#: UI Automation, SendInput, hooks)  [to do]
 ```
 
-Everything above the `Driver` interface is platform-agnostic. A new platform is
-one class plus one native helper, with no changes to surfaces, runner, or
-assertions.
+Everything above the `Driver` interface is platform-agnostic, including the
+recorder and the Studio. A new platform needs one TypeScript class and one
+native helper. The helper speaks the protocol in
+[docs/PROTOCOL.md](docs/PROTOCOL.md), which covers every op, every result
+shape, the recorder's event format and the error codes.
 
-The native helper is a single Swift binary speaking newline-delimited JSON over
+The native helper is a single binary speaking newline-delimited JSON over
 stdin/stdout. It is long-lived on purpose: element handles are only meaningful
 inside its memory, so restarting it invalidates every handle a test holds.
 
 Process lifecycle, log capture, screenshots, TCC, orchestration and reporting all
-live in Node; the Swift side does only what needs the native APIs.
+live in Node. The native side does only what needs the native APIs.
 
 ### Two bugs worth knowing about
 
@@ -341,18 +466,24 @@ long test run, and exactly the kind of bug that gets misdiagnosed as flake.
 ## Status
 
 **macOS: complete and verified.** The bundled fixture app
-(`fixtures/tray-app/`) exercises every surface, and the suite in `tests/` runs
-green with zero retries in ~21s.
+(`fixtures/tray-app/`) exercises every surface, including the recorder
+(`tests/recorder.spec.ts`), and the suite in `tests/` runs green.
 
-**Windows: designed, not implemented.** `docs/WINDOWS.md` specifies the port —
-UI Automation, the `Shell_TrayWnd` notification area, `wpndatabase.db` for toasts,
-and the `Driver` methods to fill in. `createDriver()` throws a clear error there
-today rather than pretending.
+**Windows: designed, not implemented.** [docs/WINDOWS.md](docs/WINDOWS.md) is
+the design: UI Automation, the notification area, toasts, file dialogs, the
+recorder's low-level hooks, and the fixture twin.
+[docs/WINDOWS_PROMPT.md](docs/WINDOWS_PROMPT.md) is a ready-to-run brief for
+building it with Claude Code on a Windows machine. Until then, `createDriver()`
+reports a clear "no driver for win32" error instead of pretending.
 
 **Linux:** not started. AT-SPI2 is the equivalent layer, but tray behaviour
 varies so much across desktop environments that it needs its own design pass.
 
 ## Limitations
+
+- **The recorder records clicks, typing, tray and menu use, and dialog
+  buttons.** It does not record drags or scrolling yet. Add those by hand
+  (`app.driver.drag(...)` / `scroll(...)`).
 
 - **Not headless.** Requires a real logged-in graphical session.
 - **The mouse really moves.** Notification action buttons only render on hover,

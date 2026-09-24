@@ -1,0 +1,42 @@
+name: CI
+
+# Fast checks that need no desktop session: types, and the unit tests for the
+# platform-neutral core (selector DSL, recorder step building and codegen,
+# reporters, config, and the Studio server's security guards). They run on
+# every OS the framework targets, so a change that breaks the shared layer on
+# one platform is caught before the GUI suites run.
+#
+# The OS-level suites live in desktop-tests.yml and need a real, logged-in
+# desktop, so they run on self-hosted machines.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm run test:unit
+
+  native-macos:
+    # Compiling the Swift helper catches native breakage without needing a GUI.
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash native/macos/build.sh
+      - run: bash fixtures/tray-app/build.sh

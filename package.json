@@ -1,7 +1,7 @@
 {
   "name": "dtf",
-  "version": "0.1.0",
-  "description": "OS-level end-to-end testing framework for desktop apps \u2014 tray, notifications, native dialogs, permissions, menus and windows.",
+  "version": "0.2.0",
+  "description": "OS-level end-to-end testing for desktop apps: tray, notifications, native dialogs, permissions, menus and windows, with a recorder and a Studio UI.",
   "type": "module",
   "bin": {
     "dtf": "./src/cli.ts"
@@ -17,17 +17,42 @@
     "build:fixture": "node ./scripts/build-fixture.mjs",
     "postinstall": "node ./scripts/postinstall.mjs",
     "doctor": "node ./src/cli.ts doctor",
+    "studio": "node ./src/cli.ts studio",
     "test": "node ./src/cli.ts run tests",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "example:worktrace": "node ./src/cli.ts run examples/worktrace",
+    "test:unit": "node --no-warnings --test \"test/unit/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check": "npm run typecheck && npm run test:unit"
   },
   "files": [
     "src",
-    "native",
-    "scripts"
+    "native/macos/Sources",
+    "native/macos/build.sh",
+    "native/windows",
+    "scripts",
+    "docs",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^24.13.3",
     "typescript": "5.9"
-  }
+  },
+  "keywords": [
+    "testing",
+    "e2e",
+    "desktop",
+    "electron",
+    "tray",
+    "accessibility",
+    "automation",
+    "macos",
+    "windows",
+    "recorder"
+  ],
+  "os": [
+    "darwin",
+    "win32"
+  ]
 }

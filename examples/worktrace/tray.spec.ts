@@ -10,7 +10,7 @@ import { describe, test, beforeAll } from '../../src/index.ts';
  * threw and no icon ever appeared — Playwright drives the renderer, and the tray
  * is not in the renderer.
  *
- * These tests look at the actual menu bar.
+ * These tests look at the actual menu bar (macOS) or notification area (Windows).
  */
 describe('Worktrace tray', () => {
   beforeAll(async ({ app }) => {
@@ -36,7 +36,7 @@ describe('Worktrace tray', () => {
   test('clicking the icon opens a menu', async ({ app }) => {
     const menu = await app.tray.open();
     if (menu.kind !== 'menu') {
-      throw new Error(`expected an NSMenu, got a ${menu.kind}`);
+      throw new Error(`expected a native menu, got a ${menu.kind}`);
     }
     if (menu.items().length < 3) {
       throw new Error(`tray menu looks empty: ${JSON.stringify(menu.items())}`);

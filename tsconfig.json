@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "dtf.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "test/**/*.ts", "dtf.config.ts"]
 }

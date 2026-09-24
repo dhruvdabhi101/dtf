@@ -13,6 +13,9 @@ export type DialogQuery = {
   anyApp?: boolean;
 };
 
+/** Button titles that back out of a dialog without accepting it. */
+const CANCEL_TITLES = ['Cancel', "Don't Save", 'Close', 'No', 'Dismiss'];
+
 function matches(value: string, pattern: string | RegExp): boolean {
   return pattern instanceof RegExp ? pattern.test(value) : value.toLowerCase().includes(pattern.toLowerCase());
 }
@@ -63,8 +66,7 @@ export class DialogHandle {
    * easy way to write a test that passes locally and hangs in CI.
    */
   async dismiss(): Promise<void> {
-    const cancelTitles = ['Cancel', "Don't Save", 'Close', 'No', 'Dismiss'];
-    const cancel = this.#dialog.buttons.find((b) => cancelTitles.includes(b.title) && b.enabled);
+    const cancel = this.#dialog.buttons.find((b) => CANCEL_TITLES.includes(b.title) && b.enabled);
     if (cancel) {
       await this.#driver.elementAction(cancel.ref, 'AXPress');
       return;
@@ -169,15 +171,37 @@ export class DialogSurface {
     await d.click(buttonTitle);
   }
 
+  /**
+   * Dismisses every modal the app under test has open. Used to get back to a
+   * clean state between tests.
+   *
+   * Deliberately scoped to the app's own process: other apps' dialogs (an
+   * updater, a dictation overlay) are none of the test's business, and
+   * pressing Escape at them both wastes time and interferes with whatever
+   * else is on the machine. Each dialog is closed through its own cancel
+   * control where it has one; Escape is the fallback, sent only after the app
+   * is brought to the front so the key actually reaches it.
+   */
   async dismissAll(): Promise<number> {
-    let n = 0;
-    for (let i = 0; i < 10; i++) {
-      const list = await this.list(true);
-      if (!list.length) break;
-      await this.#driver.key('escape');
+    const pid = this.#pid();
+    let dismissed = 0;
+    let previous = Infinity;
+    for (let round = 0; round < 5; round++) {
+      const own = (await this.list(false)).filter((d) => d.pid === pid);
+      // Stop when a round made no progress: something is refusing to close and
+      // retrying will not change that.
+      if (!own.length || own.length >= previous) break;
+      previous = own.length;
+      for (const d of own) {
+        const handle = new DialogHandle(this.#driver, d);
+        const hasCancel = d.buttons.some((b) => b.enabled && CANCEL_TITLES.includes(b.title));
+        if (!hasCancel) await this.#driver.activate(pid).catch(() => {});
+        await handle.dismiss().catch(() => {});
+        dismissed++;
+      }
       await new Promise((r) => setTimeout(r, 250));
-      n++;
     }
-    return n;
+    return dismissed;
   }
+
 }

@@ -36,6 +36,8 @@ type Ctx = {
   popupVar?: string;
   /** The currently open dialog: its variable and the identity it was matched by. */
   dialog?: { name: string; key: string };
+  /** Window titles used by two or more steps, and the variable each is bound to once declared. */
+  windows: Map<string, string | undefined>;
 };
 
 function fresh(ctx: Ctx, base: string): string {
@@ -80,7 +82,19 @@ function ensurePopup(ctx: Ctx): string {
 function scopeExpr(ctx: Ctx, scope: Scope): string {
   switch (scope.kind) {
     case 'app': return 'app';
-    case 'window': return scope.title ? `app.windows.get({ title: ${lit(scope.title)} })` : 'app.windows.main()';
+    case 'window': {
+      if (!scope.title) return 'app.windows.main()';
+      const expr = `app.windows.get({ title: ${lit(scope.title)} })`;
+      if (!ctx.windows.has(scope.title)) return expr;
+      // A window used by several steps gets one variable, declared at first use.
+      let name = ctx.windows.get(scope.title);
+      if (!name) {
+        name = fresh(ctx, identifierFor(scope.title, 'Window'));
+        emit(ctx, `const ${name} = ${expr};`);
+        ctx.windows.set(scope.title, name);
+      }
+      return name;
+    }
     case 'trayPopup': return ensurePopup(ctx);
     case 'dialog': return ensureDialog(ctx, { title: scope.title, text: scope.text, kind: scope.dialogKind });
   }
@@ -181,10 +195,29 @@ function stepLines(ctx: Ctx, s: Step) {
   }
 }
 
+/** `DTF Fixture` → `dtfFixtureWindow`; falls back to `window` for titles with no usable letters. */
+function identifierFor(title: string, suffix: string): string {
+  const words = title.normalize('NFKD').replace(/[^A-Za-z0-9 ]+/g, ' ').trim().split(/\s+/).filter(Boolean).slice(0, 4);
+  if (!words.length || /^\d/.test(words[0])) return suffix.toLowerCase();
+  const camel = words.map((w, i) => (i === 0 ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1).toLowerCase())).join('');
+  return `${camel}${suffix}`;
+}
+
+function windowTitles(s: Step): string[] {
+  const t = 'target' in s ? s.target : s.kind === 'expect' && 'target' in s.check ? s.check.target : undefined;
+  return t?.scope.kind === 'window' && t.scope.title ? [t.scope.title] : [];
+}
+
 /** The statements of a test body, indented by `indent`. */
 export function generateBody(steps: Step[], indent = '    '): string {
-  const ctx: Ctx = { lines: [], indent, names: new Set() };
-  for (const s of compactSteps(steps)) stepLines(ctx, s);
+  const compacted = compactSteps(steps);
+  const counts = new Map<string, number>();
+  for (const s of compacted) for (const t of windowTitles(s)) counts.set(t, (counts.get(t) ?? 0) + 1);
+  const windows = new Map<string, string | undefined>();
+  for (const [title, n] of counts) if (n >= 2) windows.set(title, undefined);
+
+  const ctx: Ctx = { lines: [], indent, names: new Set(['app']), windows };
+  for (const s of compacted) stepLines(ctx, s);
   return ctx.lines.join('\n');
 }
 

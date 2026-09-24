@@ -338,6 +338,12 @@ async function main(): Promise<number> {
         controller.abort();
         process.once('SIGINT', () => process.exit(130));
       });
+      // The Studio runs this command as a child and cancels over IPC, which
+      // works the same on every platform.
+      if (process.send) {
+        process.on('message', (m) => { if (m === 'cancel') controller.abort(); });
+        process.channel?.unref();
+      }
       const summary = await runTests({
         dir: positional[1],
         grep: str(flags.grep),

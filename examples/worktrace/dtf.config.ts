@@ -9,9 +9,13 @@ import { defineConfig } from '../../src/index.ts';
  */
 export default defineConfig({
   app: {
-    // The shipped build. Point at `dist/mac-arm64/Worktrace.app` to test a
-    // local build before release instead.
-    path: '/Applications/Worktrace.app',
+    // The shipped build: the macOS bundle, and the per-user NSIS install on
+    // Windows. Point at `dist/mac-arm64/Worktrace.app` or
+    // `dist/win-unpacked/Worktrace.exe` to test a local build instead.
+    path: {
+      darwin: '/Applications/Worktrace.app',
+      win32: '%LOCALAPPDATA%\\Programs\\Worktrace\\Worktrace.exe',
+    },
 
     // Worktrace is a tray app that signs you in and records. These tests run
     // against your REAL profile so the signed-in states are reachable at all.

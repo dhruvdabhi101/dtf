@@ -189,24 +189,12 @@ export class RecordingSession extends EventEmitter<SessionEvents> {
     this.emit('state', { recording: this.#recording, picking: this.#picking });
   }
 
-  /** Whether an event belongs to the app under test (and not, say, to the Studio's own browser tab). */
-  #relevant(e: RecordedEvent): boolean {
-    const pid = this.app.pid;
-    if (e.type === 'key') {
-      if (e.pid === pid || e.focus?.pid === pid) return true;
-      return e.focus?.dialog?.kind === 'filePanel';
-    }
-    if (e.pid === pid) return true;
-    if (e.surface === 'notification') return true;
-    return e.dialog?.kind === 'filePanel';
-  }
-
   async #handle(e: RecordedEvent): Promise<void> {
     if (e.type === 'pick') {
       await this.#handlePick(e);
       return;
     }
-    if (!this.#relevant(e)) {
+    if (!isRelevant(e, this.app.pid)) {
       this.emit('ignored', { reason: `event targeted ${('app' in e && e.app) || `pid ${e.pid}`}, not the app under test`, event: e });
       return;
     }
@@ -342,6 +330,22 @@ export class RecordingSession extends EventEmitter<SessionEvents> {
     this.suggestions.push(s);
     this.emit('suggestion', s);
   }
+}
+
+/**
+ * Whether an event belongs to the app under test — and not, say, to the
+ * Studio's own browser tab, or whatever else the person clicks while recording.
+ * Notifications and file panels are hosted by other processes, so they are let
+ * through on what they are rather than who owns them.
+ */
+export function isRelevant(e: RecordedEvent, pid: number): boolean {
+  if (e.type === 'key') {
+    if (e.pid === pid || e.focus?.pid === pid) return true;
+    return e.focus?.dialog?.kind === 'filePanel';
+  }
+  if (e.pid === pid) return true;
+  if (e.surface === 'notification') return true;
+  return e.dialog?.kind === 'filePanel';
 }
 
 /** Surfaces whose steps are addressed by path or by dialog button, not by selector. */

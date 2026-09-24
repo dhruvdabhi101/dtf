@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import type { LaunchOptions } from '../types.ts';
 import type { ReporterName } from './reporter.ts';
 
@@ -74,12 +75,32 @@ export async function loadConfigFrom(dir: string): Promise<ResolvedConfig | unde
   return undefined;
 }
 
-/** Picks this platform's app path and makes it absolute. */
-export function resolveApp(app: AppConfig | undefined, dir: string, platform = process.platform): LaunchOptions | undefined {
+/** Picks this platform's app path, expands variables in it and makes it absolute. */
+export function resolveApp(
+  app: AppConfig | undefined, dir: string, platform = process.platform, env: NodeJS.ProcessEnv = process.env,
+): LaunchOptions | undefined {
   if (!app) return undefined;
   const raw = typeof app.path === 'string' ? app.path : app.path[platform as 'darwin' | 'win32' | 'linux'];
   if (!raw) return undefined;
-  return { ...app, path: resolve(dir, raw) };
+  return { ...app, path: resolve(dir, expandPath(raw, env)) };
+}
+
+/**
+ * Expands `~`, `%VAR%` and `$VAR` / `${VAR}` in an app path, so a config can
+ * point at a per-user install (`%LOCALAPPDATA%\\Programs\\…`, `~/Applications/…`)
+ * without hard-coding a user name. An unset variable is an error rather than
+ * a literal, because the resulting "app not found" would hide the real cause.
+ */
+export function expandPath(p: string, env: NodeJS.ProcessEnv = process.env): string {
+  const lookup = (name: string) => {
+    const v = env[name] ?? env[Object.keys(env).find((k) => k.toUpperCase() === name.toUpperCase()) ?? ''];
+    if (v === undefined) throw new Error(`app.path '${p}' uses ${name}, which is not set in the environment`);
+    return v;
+  };
+  return p
+    .replace(/^~(?=$|[\\/])/, () => env.HOME ?? env.USERPROFILE ?? homedir())
+    .replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (_, n: string) => lookup(n))
+    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, a?: string, b?: string) => lookup((a ?? b)!));
 }
 
 /**

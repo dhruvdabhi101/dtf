@@ -46,7 +46,7 @@ export type RunOptions = {
   dir?: string;
   /** Only run tests whose full name contains this (case-insensitive). */
   grep?: string;
-  /** Only run these files (absolute or relative to cwd). Applied after `testMatch`. */
+  /** Only run these files (absolute or relative to cwd), whether or not they match `testMatch`. */
   files?: string[];
   /** Only run the test declared on this line (requires exactly one file). */
   line?: number;
@@ -59,6 +59,9 @@ export type RunOptions = {
 
 /** Finds test files the same way a run does, without importing them. */
 export async function findTestFiles(cwd: string, cfg: ResolvedConfig, dir?: string, only?: string[]): Promise<string[]> {
+  // Files named explicitly run even when they fall outside `testMatch`: asking
+  // for a file by path is unambiguous, and silently running nothing is not.
+  if (only?.length) return [...new Set(only.map((o) => resolve(cwd, o)))].filter((f) => existsSync(f)).sort();
   const searchRoot = dir ? resolve(cwd, dir) : cwd;
   // Glob from the project root and then narrow to the requested directory.
   // Matching inside `searchRoot` instead would silently find nothing whenever a
@@ -75,9 +78,6 @@ export async function findTestFiles(cwd: string, cfg: ResolvedConfig, dir?: stri
       }
     }
   }
-  // Files named explicitly run even when they fall outside `testMatch`: asking
-  // for a file by path is unambiguous, and silently running nothing is not.
-  if (only?.length) return [...new Set(only.map((o) => resolve(cwd, o)))].filter((f) => existsSync(f)).sort();
   return files.sort();
 }
 
@@ -150,7 +150,7 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
   const results: TestResult[] = [];
   const startedAt = Date.now();
   await emit({
-    type: 'run-start', files, app: cfg.app?.path, lifecycle: cfg.lifecycle ?? DEFAULTS.lifecycle,
+    type: 'run-start', files, app: cfg.attach ? `attach ${JSON.stringify(cfg.attach)}` : cfg.app?.path, lifecycle: cfg.lifecycle ?? DEFAULTS.lifecycle,
     platform: driver.platformName, at: startedAt,
   });
 

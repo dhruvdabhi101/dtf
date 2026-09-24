@@ -92,7 +92,7 @@ export class DesktopApp {
     this.dialogs = new DialogSurface(driver, pid);
     this.menu = new MenuSurface(driver, pid);
     this.windows = new WindowSurface(driver, pid);
-    this.permissions = new PermissionSurface(driver, () => this.#bundleId, this.dialogs);
+    this.permissions = new PermissionSurface(driver, () => this.#bundleId, this.dialogs, pid);
   }
 
   get pid() { return this.#pid; }

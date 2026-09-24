@@ -1,11 +1,22 @@
 # Worktrace example suite
 
-An OS-level suite for `com.worktrace.app`, written against the shipped
-`/Applications/Worktrace.app`.
+An OS-level suite for `com.worktrace.app`, written against the shipped build:
+`/Applications/Worktrace.app` on macOS, and the per-user install at
+`%LOCALAPPDATA%\Programs\Worktrace\Worktrace.exe` on Windows.
+
+From the framework root, on either platform:
 
 ```bash
-node src/cli.ts run examples/worktrace          # from the framework root
+npm run example:worktrace
 ```
+
+That is `node src/cli.ts run examples/worktrace`. On Windows, run `npm install`
+first so the native helper builds (it needs the .NET 8 SDK; `npm run doctor`
+checks everything), and make sure Worktrace is installed but **not already
+running** — the suite launches its own instance.
+
+On Windows the application-menu-bar test is skipped: an Electron menu lives
+inside a window there, and this app opens none on boot.
 
 ## Why this exists alongside the Playwright suite
 

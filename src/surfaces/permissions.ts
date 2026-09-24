@@ -1,7 +1,8 @@
 import type { Driver } from '../drivers/driver.ts';
-import type { PermissionService } from '../types.ts';
-import type { DialogSurface } from './dialogs.ts';
+import type { Dialog, PermissionService } from '../types.ts';
+import { DialogHandle, type DialogSurface } from './dialogs.ts';
 import { AssertionError, UnsupportedError } from '../core/errors.ts';
+import { waitFor } from '../core/wait.ts';
 
 /**
  * The app-under-test's privacy permissions.
@@ -33,11 +34,13 @@ export class PermissionSurface {
   #driver: Driver;
   #bundleId: () => string;
   #dialogs: DialogSurface;
+  #pid: () => number;
 
-  constructor(driver: Driver, bundleId: () => string, dialogs: DialogSurface) {
+  constructor(driver: Driver, bundleId: () => string, dialogs: DialogSurface, pid: () => number) {
     this.#driver = driver;
     this.#bundleId = bundleId;
     this.#dialogs = dialogs;
+    this.#pid = pid;
   }
 
   /**
@@ -57,6 +60,28 @@ export class PermissionSurface {
   /** 'unknown' means the test process cannot read the consent store, not that it is unset. */
   status(service: PermissionService): Promise<'allowed' | 'denied' | 'unset' | 'unknown'> {
     return this.#driver.readPermission(service, this.#bundleId());
+  }
+
+  /** Dialogs on screen right now, as a baseline: anything already there is not a prompt this test caused. */
+  async #snapshot(): Promise<Set<string>> {
+    return new Set((await this.#dialogs.list(true).catch(() => [])).map(dialogKey));
+  }
+
+  /**
+   * Waits for a consent prompt: a dialog that was not on screen at `baseline`
+   * and either belongs to the app under test or offers consent buttons.
+   *
+   * Both conditions matter on a real machine, which always has other windows
+   * that report themselves as dialogs — an updater, a dictation overlay, a
+   * password manager. Treating any of those as a permission prompt makes
+   * `shouldNotPrompt` fail for reasons that have nothing to do with the app.
+   */
+  async #waitForPrompt(baseline: Set<string>, timeoutMs: number): Promise<Dialog | undefined> {
+    const pid = this.#pid();
+    return waitFor(async () => {
+      const all = await this.#dialogs.list(true);
+      return all.find((d) => !baseline.has(dialogKey(d)) && (d.pid === pid || looksLikeConsent(d)));
+    }, { timeoutMs, intervalMs: 200, description: 'a permission prompt' }).catch(() => undefined);
   }
 
   /**
@@ -87,40 +112,54 @@ export class PermissionSurface {
    * why this searches across processes.
    */
   async answerPrompt(choice: 'allow' | 'deny', opts: { timeoutMs?: number } = {}): Promise<void> {
-    const dialog = await this.#dialogs.waitFor({ anyApp: true, kind: 'dialog' }, opts).catch(() => undefined);
-    if (!dialog) throw new AssertionError('no system permission prompt appeared');
+    const found = await this.#waitForPrompt(new Set(), opts.timeoutMs ?? 10_000);
+    if (!found) throw new AssertionError('no system permission prompt appeared');
+    const dialog = new DialogHandle(this.#driver, found);
     if (!dialog.automatable) {
       throw new UnsupportedError(`answering the '${dialog.title}' prompt (it is on the secure desktop)`, this.#driver.platformName);
     }
 
-    // Consent prompts vary in wording across services and OS versions, so match
-    // on any of the affirmative/negative labels Apple actually ships.
-    const allowLabels = ['Allow', 'OK', 'Allow While Using App', 'Allow Once', 'Continue'];
-    const denyLabels = ["Don't Allow", 'Deny', 'Cancel', "Don't Allow Access"];
-    const wanted = choice === 'allow' ? allowLabels : denyLabels;
-    const found = wanted.find((l) => dialog.buttons.includes(l));
-
-    if (!found) {
+    const wanted = choice === 'allow' ? ALLOW_LABELS : DENY_LABELS;
+    const label = wanted.find((l) => dialog.buttons.includes(l));
+    if (!label) {
       throw new AssertionError(
         `permission prompt '${dialog.title}' has no ${choice} button; buttons: ${JSON.stringify(dialog.buttons)}`,
       );
     }
-    await dialog.click(found);
+    await dialog.click(label);
   }
 
+  /**
+   * Passes once a consent prompt is on screen. No baseline here: the prompt is
+   * usually already up by the time this runs, straight after the action that
+   * triggered it.
+   */
   async shouldPrompt(opts: { timeoutMs?: number } = {}): Promise<void> {
-    const dialog = await this.#dialogs.waitFor({ anyApp: true }, opts).catch(() => undefined);
+    const dialog = await this.#waitForPrompt(new Set(), opts.timeoutMs ?? 10_000);
     if (!dialog) throw new AssertionError('expected the app to trigger a system permission prompt, but none appeared');
   }
 
+  /** Fails if a new consent prompt appears within the window. Dialogs already on screen are ignored. */
   async shouldNotPrompt(opts: { withinMs?: number } = {}): Promise<void> {
-    const dialog = await this.#dialogs
-      .waitFor({ anyApp: true }, { timeoutMs: opts.withinMs ?? 3000 })
-      .catch(() => undefined);
+    const baseline = await this.#snapshot();
+    const dialog = await this.#waitForPrompt(baseline, opts.withinMs ?? 3000);
     if (dialog) {
       throw new AssertionError(
-        `expected no permission prompt, but '${dialog.title}' appeared (buttons: ${JSON.stringify(dialog.buttons)})`,
+        `expected no permission prompt, but '${dialog.title}' from ${dialog.app} appeared (buttons: ${JSON.stringify(dialog.buttons.map((b) => b.title))})`,
       );
     }
   }
+}
+
+/** Labels Apple and Microsoft actually ship on consent prompts. */
+const ALLOW_LABELS = ['Allow', 'OK', 'Allow While Using App', 'Allow Once', 'Continue', 'Yes'];
+const DENY_LABELS = ["Don't Allow", 'Deny', 'Cancel', "Don't Allow Access", 'No'];
+
+function looksLikeConsent(d: Dialog): boolean {
+  const titles = d.buttons.map((b) => b.title);
+  return titles.some((t) => ALLOW_LABELS.includes(t)) && titles.some((t) => DENY_LABELS.includes(t));
+}
+
+function dialogKey(d: Dialog): string {
+  return `${d.pid}|${d.kind}|${d.title}|${d.texts.slice(0, 2).join('|')}`;
 }

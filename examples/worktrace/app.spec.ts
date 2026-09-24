@@ -26,7 +26,9 @@ describe('Worktrace boot', () => {
     }
   });
 
-  test('exposes a complete application menu bar', async ({ app }) => {
+  // macOS only: there the menu bar belongs to the app and exists with no windows.
+  // On Windows an Electron menu lives inside a window, and this app opens none.
+  (process.platform === 'darwin' ? test : test.skip)('exposes a complete application menu bar', async ({ app }) => {
     const menus = await app.menu.topLevel();
     for (const expected of ['Worktrace', 'File', 'Edit', 'View', 'Window']) {
       if (!menus.includes(expected)) {
@@ -88,7 +90,8 @@ describe('Worktrace permissions window', () => {
   test('the permissions window explains what it needs', async ({ app }) => {
     const window = await openPermissions(app);
 
-    // Readable only because the framework sets AXManualAccessibility at launch.
+    // Readable only because the framework turns on Chromium's accessibility
+    // tree at launch (AXManualAccessibility on macOS, a UIA request on Windows).
     // Without it Chromium never builds a render tree and this window is an empty
     // box to anything outside the process — including screen readers.
     await window.find('"Required permissions"').shouldExist();
@@ -116,8 +119,9 @@ describe('Worktrace permissions window', () => {
 
   test('screen recording permission is reported', async ({ app }) => {
     // Worktrace gates recording on systemPreferences.getMediaAccessStatus("screen").
-    // 'unknown' here means the *test process* lacks Full Disk Access to read
-    // TCC.db — not that the app lacks the grant. See README → Permissions.
+    // On macOS, 'unknown' means the *test process* lacks Full Disk Access to
+    // read TCC.db — not that the app lacks the grant. On Windows this reads the
+    // graphicsCaptureProgrammatic consent store. See README → Permissions.
     const status = await app.permissions.status('ScreenCapture');
     if (!['allowed', 'denied', 'unset', 'unknown'].includes(status)) {
       throw new Error(`unexpected status: ${status}`);
