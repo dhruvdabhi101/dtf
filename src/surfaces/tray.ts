@@ -31,18 +31,51 @@ export class TrayPopup {
   get kind() { return this.#content.kind; }
   get root(): AXNode { return this.#content.root; }
 
-  /** Flat list of visible menu item titles, in order. */
-  items(): string[] {
+  /**
+   * Menu item titles, in order: the top level of the menu only.
+   *
+   * Electron publishes every submenu's items in the accessibility tree even
+   * while the submenu is closed, so a naive walk mixes "Pause for 1 hour" into
+   * the top-level menu. Pass `nested: true` for that flattened list anyway.
+   * To read one submenu, use `submenu(title)`.
+   */
+  items(opts: { nested?: boolean } = {}): string[] {
     const out: string[] = [];
     const walk = (n: AXNode) => {
       if (n.role === 'AXMenuItem') {
         const label = n.title ?? n.description ?? '';
         if (label) out.push(label);
+        if (!opts.nested) return;
       }
       n.children?.forEach(walk);
     };
     walk(this.#content.root);
     return out;
+  }
+
+  /**
+   * Titles of the items inside the submenu `title`, as far as the tree shows
+   * them without opening it. Empty when the platform only builds a submenu
+   * once it is open (plain AppKit); open it with `click()` in that case.
+   */
+  submenu(title: string | RegExp): string[] {
+    const matches = (n: AXNode) => {
+      const label = n.title ?? n.description ?? '';
+      return typeof title === 'string' ? label === title : title.test(label);
+    };
+    let found: AXNode | undefined;
+    const walk = (n: AXNode) => {
+      if (found) return;
+      if (n.role === 'AXMenuItem' && matches(n)) { found = n; return; }
+      if (n.role === 'AXMenuItem') return; // only top-level parents
+      n.children?.forEach(walk);
+    };
+    walk(this.#content.root);
+    const menu = found?.children?.find((c) => c.role === 'AXMenu');
+    return (menu?.children ?? [])
+      .filter((c) => c.role === 'AXMenuItem')
+      .map((c) => c.title ?? c.description ?? '')
+      .filter(Boolean);
   }
 
   /** Every readable string in the popup — the right check for popover-style trays. */

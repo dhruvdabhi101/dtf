@@ -132,7 +132,7 @@ final class Serializer {
         if let v = axString(e, kAXTitleAttribute as String), !v.isEmpty { out["title"] = v }
         if let v = axString(e, kAXDescriptionAttribute as String), !v.isEmpty { out["description"] = v }
         if let v = axString(e, kAXHelpAttribute as String), !v.isEmpty { out["help"] = v }
-        if let v = axString(e, kAXIdentifierAttribute as String), !v.isEmpty { out["identifier"] = v }
+        if let v = axIdentifier(e) { out["identifier"] = v }
         if let v = axString(e, kAXPlaceholderValueAttribute as String), !v.isEmpty { out["placeholder"] = v }
         if let v = axAnyValue(e, kAXValueAttribute as String) { out["value"] = v }
         if let v = axBool(e, kAXEnabledAttribute as String) { out["enabled"] = v }
@@ -215,4 +215,13 @@ func findApps(bundleId: String?, name: String?) -> [NSRunningApplication] {
         if let n = name, app.localizedName != n { return false }
         return true
     }
+}
+
+/// The element's identifier: AXIdentifier for native controls, falling back to
+/// AXDOMIdentifier, which is where Chromium (Electron, Chrome) publishes the
+/// HTML `id`. Without the fallback `#signInBtn` can never match a web button.
+func axIdentifier(_ e: AXUIElement) -> String? {
+    if let v = axString(e, kAXIdentifierAttribute as String), !v.isEmpty { return v }
+    if let v = axString(e, "AXDOMIdentifier"), !v.isEmpty { return v }
+    return nil
 }

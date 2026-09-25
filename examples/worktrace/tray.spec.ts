@@ -85,7 +85,7 @@ describe('Worktrace tray', () => {
   test('recording state offers pause options', async ({ app }) => {
     const menu = await app.tray.open();
     try {
-      const items = menu.items();
+      const items = menu.items({ nested: true });
       const isDiscoveryOn = items.some((i) => i.startsWith('Turn off'));
 
       if (isDiscoveryOn) {

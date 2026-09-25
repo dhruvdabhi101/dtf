@@ -138,7 +138,8 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
 
   await mkdir(artifactsDir, { recursive: true });
 
-  const driver = await createDriver();
+  const baseDriver = await createDriver();
+  const driver = cfg.slowMoMs ? withSlowMo(baseDriver, cfg.slowMoMs) : baseDriver;
   await driver.start();
 
   const perm = await driver.checkAutomationPermission();
@@ -352,3 +353,30 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
 }
 
 export type { Driver };
+
+/** Driver calls that act on the UI, and so get the `slowMoMs` pause after them. */
+const INPUT_OPS = new Set<string>([
+  'elementAction', 'elementSetValue', 'elementClick', 'elementHover', 'elementFocus',
+  'trayOpen', 'trayClose', 'menuClick', 'windowSetBounds', 'windowSetMinimized',
+  'notificationAct', 'dialogSetFilePath', 'key', 'type', 'click', 'move', 'drag', 'scroll', 'openUrl',
+]);
+
+/**
+ * Wraps a driver so every input action is followed by a fixed pause. Queries
+ * stay fast: only what changes the UI is slowed down, which is the part that
+ * races an app still animating or loading.
+ */
+export function withSlowMo(driver: Driver, ms: number): Driver {
+  return new Proxy(driver, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      if (typeof prop !== 'string' || !INPUT_OPS.has(prop)) return value.bind(target);
+      return async (...args: unknown[]) => {
+        const result = await value.apply(target, args);
+        await sleep(ms);
+        return result;
+      };
+    },
+  });
+}

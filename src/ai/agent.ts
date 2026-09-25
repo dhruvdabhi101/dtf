@@ -256,7 +256,7 @@ async function runTool(
         return { text: json(await app.tray.list()) };
       case 'tray_open': {
         const popup = await app.tray.open(input.label ? { label: String(input.label) } : {});
-        return { text: json({ kind: popup.kind, items: popup.items(), texts: popup.texts() }) };
+        return { text: json({ kind: popup.kind, items: popup.items({ nested: true }), texts: popup.texts() }) };
       }
       case 'notifications':
         return { text: json(await app.notifications.listAll()) };

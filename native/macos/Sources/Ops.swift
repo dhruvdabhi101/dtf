@@ -269,8 +269,12 @@ func dispatch(op: String, args: Args) throws -> Any {
 
     case "tray.close":
         // Escape reliably dismisses a tracking menu; AXCancel does not always.
+        // Only send it when a menu is actually on screen: with no menu open,
+        // Escape lands in whatever window is frontmost, and plenty of apps
+        // (onboarding flows, sheets, popovers) close themselves on Escape.
+        guard menuIsOpen() else { return ["ok": true, "sent": false] }
         _ = Input.key("escape")
-        return ["ok": true]
+        return ["ok": true, "sent": true]
 
     // ── Application menu bar ─────────────────────────────────────────────────
     case "menu.tree":
@@ -790,6 +794,15 @@ func dialogList(pid: Int?) -> [[String: Any]] {
 
 /// Matches an AX window to its CGWindowID by owner pid and bounds so the Node
 /// side can hand the id to `screencapture -l` for a window-scoped screenshot.
+/// True when a menu (tray, context or menu-bar menu) is on screen. AppKit
+/// draws open menus in windows at the pop-up menu level.
+func menuIsOpen() -> Bool {
+    guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+        as? [[String: Any]] else { return true }  // can't tell: keep the old behaviour
+    let menuLevel = Int(CGWindowLevelForKey(.popUpMenuWindow))
+    return list.contains { ($0[kCGWindowLayer as String] as? Int) == menuLevel }
+}
+
 func cgWindowId(pid: pid_t, rect: CGRect) -> Int? {
     guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
         as? [[String: Any]] else { return nil }

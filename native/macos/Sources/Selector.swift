@@ -65,7 +65,7 @@ struct Selector {
         if let d = descriptionContains, !ci(axString(e, kAXDescriptionAttribute as String), d) { return false }
         if let v = value, axString(e, kAXValueAttribute as String) != v { return false }
         if let v = valueContains, !ci(axString(e, kAXValueAttribute as String), v) { return false }
-        if let i = identifier, axString(e, kAXIdentifierAttribute as String) != i { return false }
+        if let i = identifier, axIdentifier(e) != i { return false }
         if let h = help, axString(e, kAXHelpAttribute as String) != h { return false }
         if let h = helpContains, !ci(axString(e, kAXHelpAttribute as String), h) { return false }
         if let en = enabled, (axBool(e, kAXEnabledAttribute as String) ?? true) != en { return false }

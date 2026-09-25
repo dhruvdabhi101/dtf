@@ -39,11 +39,44 @@ const KNOWN_BROWSERS = [
   'org.mozilla.firefox',
   'company.thebrowser.Browser', // Arc
   'com.brave.Browser',
+  'net.imput.helium',
   'com.operasoftware.Opera',
   'com.vivaldi.Vivaldi',
 ];
 
-const BROWSERISH = /browser|chrome|chromium|safari|firefox|webkit|arc|brave|edge|opera|vivaldi|helium|orion|zen/i;
+/**
+ * Turns an address-bar value into a URL. Chromium hides the scheme when the
+ * field is not focused ("app.example.com/login?…"), so a bare host+path is
+ * read as https. Anything that is not URL-shaped (a search query) is rejected.
+ */
+export function toUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const v = value.trim();
+  if (!v || /\s/.test(v)) return undefined;
+  // A scheme is `x://…`, or one of the few that have no slashes. `host:port`
+  // looks like a scheme too, so it is not treated as one.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v) || /^(about|data|mailto|file|blob|javascript):/i.test(v)) return v;
+  if (/^(localhost|[\w-]+(\.[\w-]+)+)(:\d+)?([/?#]|$)/i.test(v)) return `https://${v}`;
+  return undefined;
+}
+
+/** Chromium-family browsers `launchIsolated` can drive, most common first. */
+const CHROMIUM_BROWSERS = [
+  'com.google.Chrome',
+  'com.microsoft.edgemac',
+  'com.brave.Browser',
+  'company.thebrowser.Browser', // Arc
+  'org.chromium.Chromium',
+  'com.vivaldi.Vivaldi',
+  'com.operasoftware.Opera',
+  'com.google.Chrome.canary',
+  'net.imput.helium',
+];
+
+/** Browsers that ignore Chromium's switches, so can never be the isolated browser. */
+const NOT_CHROMIUM = ['com.apple.Safari', 'com.apple.SafariTechnologyPreview', 'org.mozilla.firefox'];
+
+const BROWSERISH =/browser|chrome|chromium|safari|firefox|webkit|arc|brave|edge|opera|vivaldi|helium|orion|zen/i;
 
 export type OpenPage = {
   browser: string;
@@ -143,17 +176,26 @@ export class BrowserSurface {
       if (typeof url === 'string' && url) return url;
     }
 
-    for (const identifier of ['WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD', 'address-bar', 'omnibox']) {
+    // The address bar. Chromium browsers (Chrome, Edge, Brave, Helium, …) label
+    // it "Address and search bar" rather than giving it an identifier.
+    const omnibox = [
+      { identifier: 'WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD' },
+      { identifier: 'address-bar' },
+      { identifier: 'omnibox' },
+      { text: 'Address and search bar' },
+    ];
+    for (const sel of omnibox) {
       const field = await this.#driver
-        .find({ ref: windowRef }, [{ role: 'AXTextField', identifier, maxDepth: 12 }], { maxDepth: 0 })
+        .find({ ref: windowRef }, [{ role: 'AXTextField', ...sel, maxDepth: 20 }], { maxDepth: 0 })
         .catch(() => undefined);
-      if (field && typeof field.value === 'string' && field.value) return field.value;
+      const url = toUrl(field?.value);
+      if (url) return url;
     }
 
     const anyField = await this.#driver
       .find({ ref: windowRef }, [{ role: 'AXTextField', maxDepth: 10 }], { maxDepth: 0 })
       .catch(() => undefined);
-    return typeof anyField?.value === 'string' && anyField.value ? anyField.value : undefined;
+    return toUrl(anyField?.value);
   }
 
   /** Waits for any browser to be showing a URL matching `pattern`. */
@@ -176,10 +218,12 @@ export class BrowserSurface {
     } catch {
       const pages = await this.pages();
       const hint = pages.length === 0
-        ? '\nNo browser URL could be read at all. Chromium-based browsers do not expose their\n' +
-          'URL to accessibility, so this falls back to AppleScript, which needs the Automation\n' +
-          'permission for the process running the tests (System Settings > Privacy & Security >\n' +
-          'Automation). In CI, pre-grant kTCCServiceAppleEvents — see docs/CI.md.'
+        ? '\nNo browser page was found at all. Usually that means none opened: check the app\n' +
+          'actually started the hand-off (its log), and that the browser window is on the current\n' +
+          'Space and not minimised (hidden windows are invisible to accessibility). If a page IS\n' +
+          'open, its URL could not be read: the address bar is used first, then AppleScript, which\n' +
+          'needs the Automation permission for the process running the tests (System Settings >\n' +
+          'Privacy & Security > Automation; in CI pre-grant kTCCServiceAppleEvents, see docs/CI.md).'
         : '';
       throw new AssertionError(
         `expected a browser page matching ${pattern}.\n` +
@@ -226,11 +270,7 @@ export class BrowserSurface {
     url: string,
     opts: { bundleId?: string; extraArgs?: string[]; timeoutMs?: number } = {},
   ): Promise<import('../app.ts').DesktopApp> {
-    const bundleId = opts.bundleId ?? (await this.defaultBrowser());
-    if (!bundleId) throw new Error('could not determine a browser to launch');
-
-    const appPath = await this.#driver.appPathForBundleId(bundleId);
-    if (!appPath) throw new Error(`no installed app found for bundle id ${bundleId}`);
+    const { bundleId, appPath } = await this.#chromiumBrowser(opts.bundleId);
 
     const { DesktopApp } = await import('../app.ts');
     const profile = await mkdtemp(join(tmpdir(), 'dtf-browser-'));
@@ -248,6 +288,31 @@ export class BrowserSurface {
         url,
       ],
     });
+  }
+
+  /**
+   * Picks the browser `launchIsolated` drives. It has to be Chromium-based:
+   * Safari and Firefox ignore the profile and accessibility flags, and Safari
+   * does not even open the URL passed on its command line, so "the default
+   * browser" is only used when it qualifies. Otherwise the first installed
+   * Chromium browser wins.
+   */
+  async #chromiumBrowser(requested?: string): Promise<{ bundleId: string; appPath: string }> {
+    const candidates = requested ? [requested] : [
+      (await this.defaultBrowser()) ?? '',
+      ...CHROMIUM_BROWSERS,
+    ].filter((id) => id && !NOT_CHROMIUM.includes(id));
+
+    for (const id of [...new Set(candidates)]) {
+      const appPath = await this.#driver.appPathForBundleId(id).catch(() => undefined);
+      if (appPath) return { bundleId: id, appPath };
+    }
+    throw new Error(
+      requested
+        ? `no installed app found for bundle id ${requested}`
+        : `launchIsolated needs a Chromium-based browser (Chrome, Edge, Brave, Arc, …) and none is installed; ` +
+            `the default browser (${await this.defaultBrowser()}) is not Chromium-based`,
+    );
   }
 
   /**

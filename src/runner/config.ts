@@ -28,6 +28,12 @@ export type DTFConfig = {
   retries?: number;
   /** Capture a screenshot automatically whenever a test fails. */
   screenshotOnFailure?: boolean;
+  /**
+   * Pause this long after every input action (clicks, key presses, typing,
+   * menu and tray interactions, scrolls, drags). Off by default. Useful when
+   * the app animates or loads between steps, and for watching a run.
+   */
+  slowMoMs?: number;
   /** Clear stray notifications and modals before each test. */
   cleanSlate?: boolean;
   /** Reset these privacy grants before each launch, to test first-run flows. */
@@ -45,7 +51,7 @@ export type DTFConfig = {
 /** The config after loading: the app path is resolved for this platform. */
 export type ResolvedConfig = Omit<DTFConfig, 'app'> & { app?: LaunchOptions; configFile?: string };
 
-export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'attach'>> = {
+export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'attach' | 'slowMoMs'>> = {
   lifecycle: 'per-file',
   testMatch: ['**/*.spec.ts', '**/*.test.ts'],
   artifactsDir: 'dtf-artifacts',
