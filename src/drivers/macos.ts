@@ -40,6 +40,24 @@ const TCC_SERVICES: Record<string, string> = {
 };
 
 const USER_TCC_DB = join(process.env.HOME ?? '', 'Library/Application Support/com.apple.TCC/TCC.db');
+const SYSTEM_TCC_DB = '/Library/Application Support/com.apple.TCC/TCC.db';
+
+/**
+ * Services whose grants live in the machine-wide TCC.db rather than the
+ * user's. Screen Recording and Accessibility are the two that matter most, and
+ * reading them from the user database always reports 'unset'.
+ */
+const SYSTEM_SERVICES = new Set([
+  'kTCCServiceAccessibility', 'kTCCServiceScreenCapture', 'kTCCServiceListenEvent',
+  'kTCCServicePostEvent', 'kTCCServiceSystemPolicyAllFiles',
+]);
+
+const tccDbFor = (svc: string) => (SYSTEM_SERVICES.has(svc) ? SYSTEM_TCC_DB : USER_TCC_DB);
+
+/** Bundle ids and service names are interpolated into SQL, so allow only what they can contain. */
+function assertSqlSafe(v: string, what: string) {
+  if (!/^[A-Za-z0-9._\-/ ]+$/.test(v)) throw new Error(`refusing ${what} '${v}': unexpected characters`);
+}
 
 export class MacOSDriver implements Driver {
   readonly platform = 'darwin';
@@ -74,7 +92,12 @@ export class MacOSDriver implements Driver {
     const focus = await run('/usr/bin/defaults', [
       'read', `${process.env.HOME}/Library/DoNotDisturb/DB/Assertions.json`,
     ]).then((r) => r.stdout.includes('"assertionDetails"')).catch(() => false);
+    const tcc = await tccWritable();
     return [{
+      name: 'permission granting',
+      ok: tcc.ok ? true : 'warn',
+      detail: tcc.ok ? tcc.detail : `not possible here — ${tcc.detail}`,
+    }, {
       name: 'Do Not Disturb',
       ok: focus ? 'warn' : true,
       detail: focus
@@ -340,20 +363,94 @@ export class MacOSDriver implements Driver {
   async readPermission(service: string, bundleId: string) {
     const svc = TCC_SERVICES[service];
     if (!svc) return 'unknown' as const;
+    assertSqlSafe(bundleId, 'bundle id');
     try {
-      const { stdout } = await run('/usr/bin/sqlite3', [
-        USER_TCC_DB,
-        `SELECT auth_value FROM access WHERE service='${svc}' AND client='${bundleId}' LIMIT 1;`,
-      ]);
-      const v = stdout.trim();
+      const v = (await this.#tccQuery(tccDbFor(svc),
+        `SELECT auth_value FROM access WHERE service='${svc}' AND client='${bundleId}' LIMIT 1;`)).trim();
       if (v === '') return 'unset' as const;
       // 0 = denied, 1 = unknown/limited, 2 = allowed.
       return v === '2' ? ('allowed' as const) : v === '0' ? ('denied' as const) : ('unknown' as const);
     } catch {
-      // Reading TCC.db needs Full Disk Access; absence of it is not a test failure.
+      // Reading TCC.db needs Full Disk Access (or root); absence of it is not a test failure.
       return 'unknown' as const;
     }
   }
+
+  /**
+   * Writes a grant straight into TCC.db, with no prompt.
+   *
+   * macOS only allows this when System Integrity Protection is off and the
+   * write runs as root: a dedicated CI Mac set up per docs/CI.md, or a hosted
+   * runner image that happens to ship with SIP off. Anywhere else, including a
+   * normal developer Mac, this throws `UnsupportedError` naming the supported
+   * alternative (an MDM-pushed PPPC profile).
+   */
+  async setPermission(service: string, bundleId: string, state: 'allowed' | 'denied') {
+    const svc = TCC_SERVICES[service];
+    if (!svc) throw new Error(`unknown permission service '${service}'; known: ${Object.keys(TCC_SERVICES).join(', ')}`);
+    assertSqlSafe(bundleId, 'bundle id');
+    const writable = await tccWritable();
+    if (!writable.ok) {
+      throw new UnsupportedError(`${state === 'allowed' ? 'Granting' : 'Denying'} '${service}' from a script`, 'macOS', writable.detail);
+    }
+    const db = tccDbFor(svc);
+    const now = Math.floor(Date.now() / 1000);
+    // The `access` table gains columns in most macOS releases, so build the row
+    // from the live schema, as scripts/ci-setup-macos.sh does.
+    const values: Record<string, string | number | null> = {
+      service: svc,
+      client: bundleId,
+      client_type: bundleId.startsWith('/') ? 1 : 0, // 0 = bundle id, 1 = absolute path
+      auth_value: state === 'allowed' ? 2 : 0,
+      auth_reason: 4, // set by the system administrator
+      auth_version: 1,
+      flags: 0,
+      last_modified: now,
+      indirect_object_identifier_type: 0,
+      indirect_object_identifier: 'UNUSED',
+      boot_uuid: 'UNUSED',
+      last_reminded: now,
+    };
+    const cols = (await this.#tccQuery(db, 'PRAGMA table_info(access);', { write: true }))
+      .trim().split('\n').map((l) => l.split('|')[1]).filter(Boolean);
+    if (!cols.includes('service')) throw new Error(`could not read the schema of ${db}`);
+    const lit = (v: string | number | null | undefined) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : `'${v}'`);
+    await this.#tccQuery(db,
+      `INSERT OR REPLACE INTO access (${cols.join(',')}) VALUES (${cols.map((c) => lit(values[c])).join(',')});`, { write: true });
+    // tccd caches decisions; restarting it makes the new row visible to the
+    // next launch. launchd restarts it on demand.
+    await run('/usr/bin/sudo', ['-n', '/usr/bin/killall', 'tccd']).catch(() => {});
+    await run('/usr/bin/killall', ['tccd']).catch(() => {});
+  }
+
+  /** Runs sqlite3 directly, falling back to passwordless sudo (a CI runner) when TCC.db is not readable. */
+  async #tccQuery(db: string, sql: string, opts: { write?: boolean } = {}): Promise<string> {
+    const asRoot = () => run('/usr/bin/sudo', ['-n', '/usr/bin/sqlite3', db, sql]).then((r) => r.stdout);
+    if (opts.write) return asRoot();
+    try {
+      return (await run('/usr/bin/sqlite3', [db, sql])).stdout;
+    } catch {
+      return asRoot();
+    }
+  }
+}
+
+/**
+ * Whether this machine lets a script write TCC.db: SIP must be off and we must
+ * be root or have passwordless sudo. Cached, since neither changes mid-run.
+ */
+let tccWritableCache: Promise<{ ok: boolean; detail: string }> | undefined;
+export function tccWritable(): Promise<{ ok: boolean; detail: string }> {
+  tccWritableCache ??= (async () => {
+    const sip = await run('/usr/bin/csrutil', ['status']).then((r) => r.stdout).catch(() => '');
+    if (!/disabled/i.test(sip)) {
+      return { ok: false, detail: 'System Integrity Protection is enabled, so TCC.db is read-only. Pre-grant with an MDM-pushed PPPC profile, or use a CI Mac with SIP disabled (see docs/CI.md)' };
+    }
+    const root = process.getuid?.() === 0 || await run('/usr/bin/sudo', ['-n', 'true']).then(() => true).catch(() => false);
+    if (!root) return { ok: false, detail: 'SIP is off, but writing TCC.db needs root and passwordless sudo is not available' };
+    return { ok: true, detail: 'SIP is off and root is available — permissions can be granted from a script' };
+  })();
+  return tccWritableCache;
 }
 
 export function assertMacOS() {

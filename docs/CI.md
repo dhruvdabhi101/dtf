@@ -2,15 +2,22 @@
 
 Short version:
 
-- **Use a self-hosted Mac with a real logged-in desktop session.** GitHub-hosted
-  macOS runners cannot grant Accessibility, and that permission is mandatory.
+- **Prefer a self-hosted Mac with a real logged-in desktop session.** GitHub-hosted
+  macOS images currently ship with SIP off, so permissions *can* be granted
+  there (`desktop-tests-macos-hosted.yml`), but GitHub does not guarantee it.
 - **Pre-grant permissions. Never try to click through a consent dialog** — macOS
   rejects synthetic clicks on TCC prompts by design.
 - **Do not automate the identity provider.** Assert the OAuth handoff, then fire
   the callback deep link yourself with a CI service-account token.
 
 `scripts/ci-setup-macos.sh` provisions a runner. `.github/workflows/desktop-tests.yml`
-is a working workflow.
+is the self-hosted workflow; `.github/workflows/desktop-tests-macos-hosted.yml`
+runs on GitHub's own Macs and checks SIP first.
+
+To grant the **app under test** its permissions before it launches, use
+`dtf permissions grant <Service…>` as a CI step, or `grantPermissions` in
+`dtf.config.ts`. Both need SIP off and root, and fail with an explanation
+otherwise. `dtf doctor` shows which case you are in.
 
 ---
 

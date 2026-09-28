@@ -42,8 +42,9 @@ export class AssertionError extends Error {
 }
 
 export class UnsupportedError extends Error {
-  constructor(feature: string, platform: string) {
-    super(`${feature} is not implemented on ${platform}`);
+  /** `reason`, when given, replaces "is not implemented": for things the OS forbids rather than ones dtf lacks. */
+  constructor(feature: string, platform: string, reason?: string) {
+    super(reason ? `${feature} is not possible on this ${platform} machine: ${reason}` : `${feature} is not implemented on ${platform}`);
     this.name = 'UnsupportedError';
   }
 }

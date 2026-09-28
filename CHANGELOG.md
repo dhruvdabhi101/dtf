@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `dtf permissions status|grant|deny|reset <service…>`: change an app's privacy
+  grants before it launches, for CI.
+- `grantPermissions` / `denyPermissions` config, applied before every launch.
+- macOS `permissions.grant()` / `deny()` where TCC.db is writable (SIP off and
+  root). Elsewhere they fail with an explanation instead of "not implemented".
+- `dtf doctor` reports whether this machine can grant permissions.
+- `desktop-tests-macos-hosted.yml`: the OS suite on GitHub-hosted Macs, plus an
+  opt-in Worktrace permissions job.
+
+### Fixed
+- Permission reads for Screen Recording, Accessibility, Input Monitoring and
+  Full Disk Access used the per-user TCC.db; those grants are in the system
+  one, so they always read 'unset'.
+- `resetPermissions` launched the app to learn its bundle id, which could
+  trigger the very prompt under test, and swallowed reset errors.
+- `ci-setup-macos.sh` wrote Microphone grants to the system TCC.db, where macOS
+  ignores them.
+- The Worktrace permission test accepted any status. It now checks the app's
+  window against the OS grants.
+
 ## 0.2.0
 
 ### Added

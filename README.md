@@ -320,13 +320,30 @@ Worth being blunt, because it shapes every test you can write:
 | Operation | Supported | Notes |
 |---|---|---|
 | Reset a grant | ✅ | `app.permissions.reset('Camera')` — re-arms the first-run consent flow. Takes effect on next launch. |
-| Answer a consent prompt | ✅ | `app.permissions.answerPrompt('deny')` — the prompt is a window on a *system* process, so it is matched across pids. |
+| Answer a consent prompt | ⚠️ | `app.permissions.answerPrompt('deny')` finds the prompt across processes, but recent macOS rejects synthetic clicks on TCC prompts. **Screen Recording and Accessibility have no Allow button at all** — the user is sent to System Settings, which asks for an admin password. Do not build a suite on clicking through consent. |
 | Assert a prompt did/didn't appear | ✅ | `shouldPrompt()` / `shouldNotPrompt()` |
-| Read the current grant | ⚠️ | Needs Full Disk Access for the test process; returns `'unknown'` otherwise rather than failing. |
-| **Grant** a permission from a script | ❌ | Impossible by design. `TCC.db` is SIP-protected and only the system consent UI may write to it. |
+| Read the current grant | ⚠️ | Needs Full Disk Access (or root) for the test process; returns `'unknown'` otherwise rather than failing. |
+| **Grant / deny** without a prompt | ⚠️ | `app.permissions.grant()`, the `grantPermissions` / `denyPermissions` config, or `dtf permissions grant …`. Works only where TCC.db is writable: SIP off and root. On a normal Mac it fails with an explanation. On Windows it always works. |
 
-To pre-grant permissions on a CI runner, install a **PPPC configuration profile**
-via MDM. That is the only supported route, and it requires enrolment.
+Grants must be in place **before** the app launches, because apps read them at
+boot. On CI, do it as a step before `dtf run`:
+
+```bash
+npx dtf permissions grant ScreenCapture Accessibility   # the configured app
+npx dtf permissions status ScreenCapture Accessibility
+```
+
+or in the config, which applies them before every launch:
+
+```ts
+export default defineConfig({
+  app: { path: '/Applications/YourApp.app' },
+  grantPermissions: ['ScreenCapture', 'Accessibility'],
+});
+```
+
+`dtf doctor` reports whether this machine can grant. With SIP on, the supported
+route is an MDM-pushed **PPPC configuration profile**. See [docs/CI.md](docs/CI.md).
 
 ## Browser handoff and sign-in
 

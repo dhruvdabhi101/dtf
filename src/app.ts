@@ -53,6 +53,23 @@ async function readBundle(appPath: string): Promise<BundleMeta> {
 }
 
 /**
+ * The id the OS keys an app's privacy grants on, read without launching it:
+ * the bundle id of a `.app`, or the executable path on Windows. Permissions
+ * have to be set before the first launch, because an app reads them at boot.
+ */
+export async function appIdentity(appPath: string): Promise<string> {
+  const p = resolvePath(appPath);
+  if (!existsSync(p)) throw new Error(`app not found at ${p}`);
+  if (p.endsWith('.app')) {
+    const { bundleId } = await readBundle(p);
+    if (!bundleId) throw new Error(`${p} has no CFBundleIdentifier`);
+    return bundleId;
+  }
+  if (/\.lnk$/i.test(p)) return (await readShortcut(p)).executable;
+  return p;
+}
+
+/**
  * A running application under test, plus every OS surface attached to it.
  *
  * Applications are launched by executing the binary inside the bundle directly

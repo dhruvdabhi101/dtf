@@ -95,10 +95,19 @@ ok "Do Not Disturb disabled"
 say "Privacy permissions"
 
 TCC_SYSTEM="/Library/Application Support/com.apple.TCC/TCC.db"
+# Camera, Microphone and the other per-user services live in the CI user's own
+# TCC.db; a row for them in the system database is ignored.
+CI_HOME="$(eval echo "~${SUDO_USER:-$USER}")"
+TCC_USER="$CI_HOME/Library/Application Support/com.apple.TCC/TCC.db"
 
 grant() {
   local service="$1" client="$2" client_type="$3"   # client_type: 0 = bundle id, 1 = absolute path
-  sudo /usr/bin/python3 - "$TCC_SYSTEM" "$service" "$client" "$client_type" <<'PY'
+  local db="$TCC_USER"
+  case "$service" in
+    kTCCServiceAccessibility|kTCCServiceScreenCapture|kTCCServiceListenEvent|kTCCServicePostEvent|kTCCServiceSystemPolicyAllFiles)
+      db="$TCC_SYSTEM" ;;
+  esac
+  sudo /usr/bin/python3 - "$db" "$service" "$client" "$client_type" <<'PY'
 import sqlite3, sys, time
 
 db, service, client, client_type = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])

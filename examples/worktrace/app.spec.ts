@@ -117,14 +117,42 @@ describe('Worktrace permissions window', () => {
     if (!(await app.isRunning())) throw new Error('closing the permissions window quit the app');
   });
 
-  test('screen recording permission is reported', async ({ app }) => {
-    // Worktrace gates recording on systemPreferences.getMediaAccessStatus("screen").
-    // On macOS, 'unknown' means the *test process* lacks Full Disk Access to
-    // read TCC.db — not that the app lacks the grant. On Windows this reads the
-    // graphicsCaptureProgrammatic consent store. See README → Permissions.
-    const status = await app.permissions.status('ScreenCapture');
-    if (!['allowed', 'denied', 'unset', 'unknown'].includes(status)) {
-      throw new Error(`unexpected status: ${status}`);
+  /**
+   * Worktrace's window must agree with what macOS actually granted.
+   *
+   * The OS side is read from TCC.db, which needs Full Disk Access or root. On a
+   * developer Mac without either it reads 'unknown', and this test can only
+   * check that each permission row renders a state. On CI, run
+   * `dtf permissions grant|deny ScreenCapture Accessibility` first and set
+   * DTF_EXPECT_PERMISSIONS=granted|denied — then it is a real end-to-end check
+   * that the app picks up the grant (see .github/workflows/worktrace-macos.yml).
+   */
+  test('the permissions window agrees with the OS grants', async ({ app }) => {
+    const window = await openPermissions(app);
+    const services = ['ScreenCapture', 'Accessibility'] as const;
+    const statuses = await Promise.all(services.map((s) => app.permissions.status(s)));
+    const expected = process.env.DTF_EXPECT_PERMISSIONS;
+
+    const granted = await window.find('button[title="✓ Granted"]').count();
+    const allGranted = await window.find('"All permissions granted."').exists();
+
+    // Whatever the state, both rows must render one, and the summary must agree with the rows.
+    await window.find('"Screen Recording"').shouldExist();
+    await window.find('"Accessibility"').shouldExist();
+    if (allGranted !== (granted === services.length)) {
+      throw new Error(`summary says ${allGranted ? '' : 'not '}all granted, but ${granted} of ${services.length} rows show ✓ Granted`);
+    }
+
+    if (expected === 'granted' || expected === 'denied') {
+      const want = expected === 'granted' ? services.length : 0;
+      if (granted !== want) throw new Error(`expected ${want} rows to show ✓ Granted after the grants were ${expected}, found ${granted} (OS: ${statuses.join(', ')})`);
+    }
+
+    if (!statuses.includes('unknown')) {
+      const osGranted = statuses.filter((s) => s === 'allowed').length;
+      if (granted !== osGranted) {
+        throw new Error(`the OS has ${osGranted} of these granted (${services.map((s, i) => `${s}=${statuses[i]}`).join(', ')}), but the window shows ${granted}`);
+      }
     }
   });
 

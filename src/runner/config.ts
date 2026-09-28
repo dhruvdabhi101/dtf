@@ -39,6 +39,14 @@ export type DTFConfig = {
   /** Reset these privacy grants before each launch, to test first-run flows. */
   resetPermissions?: string[];
   /**
+   * Grant these before each launch, with no prompt. Works on Windows, and on
+   * macOS only where TCC.db is writable (SIP off and root, as on GitHub's
+   * hosted runners). Elsewhere the run fails up front and says why.
+   */
+  grantPermissions?: string[];
+  /** Deny these before each launch, to test the app's denied path. Same limits as `grantPermissions`. */
+  denyPermissions?: string[];
+  /**
    * Attach to an app that is already running instead of launching one. Useful
    * for login items and apps started by an installer. An attached app is left
    * running when the tests finish.
@@ -51,7 +59,7 @@ export type DTFConfig = {
 /** The config after loading: the app path is resolved for this platform. */
 export type ResolvedConfig = Omit<DTFConfig, 'app'> & { app?: LaunchOptions; configFile?: string };
 
-export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'attach' | 'slowMoMs'>> = {
+export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'grantPermissions' | 'denyPermissions' | 'attach' | 'slowMoMs'>> = {
   lifecycle: 'per-file',
   testMatch: ['**/*.spec.ts', '**/*.test.ts'],
   artifactsDir: 'dtf-artifacts',

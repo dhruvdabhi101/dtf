@@ -5,8 +5,9 @@ import { pathToFileURL } from 'node:url';
 
 import type { Driver } from '../drivers/driver.ts';
 import { createDriver } from '../drivers/index.ts';
-import { DesktopApp } from '../app.ts';
+import { DesktopApp, appIdentity } from '../app.ts';
 import { sleep } from '../core/wait.ts';
+import { UnsupportedError } from '../core/errors.ts';
 import {
   rootSuite, resetRegistry, setCurrentFile, hasOnly,
   type SuiteNode, type TestCase, type TestContext,
@@ -162,13 +163,17 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
     if (cfg.lifecycle === 'manual') return null;
     if (cfg.attach) return DesktopApp.attach(driver, cfg.attach);
     if (!cfg.app?.path) return null;
-    if (cfg.resetPermissions?.length) {
-      // Read the bundle id without launching, so the reset lands before first run.
-      const probe = await DesktopApp.launch(driver, { ...cfg.app, timeoutMs: cfg.app.timeoutMs });
-      const bundleId = probe.bundleId;
-      await probe.close();
-      for (const svc of cfg.resetPermissions) {
-        await driver.resetPermission(svc, bundleId).catch(() => {});
+    if (cfg.resetPermissions?.length || cfg.grantPermissions?.length || cfg.denyPermissions?.length) {
+      // Read the id without launching: the app checks its grants at boot, so
+      // they must be in place before the first launch, not after a probe one.
+      const id = await appIdentity(cfg.app.path);
+      for (const svc of cfg.resetPermissions ?? []) await driver.resetPermission(svc, id);
+      for (const [list, state] of [[cfg.grantPermissions, 'allowed'], [cfg.denyPermissions, 'denied']] as const) {
+        if (!list?.length) continue;
+        if (!driver.setPermission) {
+          throw new UnsupportedError(`${state === 'allowed' ? 'grantPermissions' : 'denyPermissions'}`, driver.platformName);
+        }
+        for (const svc of list) await driver.setPermission(svc, id, state);
       }
     }
     return DesktopApp.launch(driver, cfg.app);

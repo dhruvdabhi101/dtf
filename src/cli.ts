@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { runTests, collectTests } from './runner/run.ts';
 import { createDriver } from './drivers/index.ts';
 import { loadConfig } from './runner/config.ts';
-import { DesktopApp } from './app.ts';
+import { DesktopApp, appIdentity } from './app.ts';
 import { aiCheck } from './ai/agent.ts';
 import { runDoctor, doctorPassed, type PreflightCheck } from './doctor.ts';
 import { RecordingSession } from './recorder/session.ts';
@@ -32,6 +32,10 @@ Usage
   dtf inspect dialogs        Show open dialogs, sheets and file panels
   dtf inspect menu           Dump an app's menu bar
   dtf ask "<claim>"          Ask the AI checker to verify a claim about an app
+  dtf permissions <action> <service...>
+                             status | grant | deny | reset an app's privacy grants,
+                             before launch (e.g. on CI). --bundle <id> or --app <path>;
+                             defaults to the configured app
 
 Run options
   --grep <text>       Only run tests whose name contains <text>
@@ -61,6 +65,7 @@ Examples
   dtf run tests --grep tray --reporter pretty,junit
   dtf record tests/recorded.spec.ts --launch
   dtf inspect tree --bundle com.example.myapp --depth 6
+  dtf permissions grant ScreenCapture Accessibility --dir examples/worktrace
 `;
 
 type Flags = Record<string, string | boolean>;
@@ -160,6 +165,48 @@ async function init(): Promise<number> {
     console.log('created tests/os.spec.ts');
   }
   console.log('\nNext: edit the app path in dtf.config.ts, then run `dtf doctor` and `dtf studio`.\n');
+  return 0;
+}
+
+/**
+ * `dtf permissions`: read or change an app's privacy grants without launching
+ * it. On CI this runs before `dtf run`, so the app boots already granted.
+ */
+async function permissions(action: string | undefined, services: string[], flags: Flags): Promise<number> {
+  const actions = ['status', 'grant', 'deny', 'reset'];
+  if (!action || !actions.includes(action)) {
+    console.error(`usage: dtf permissions <${actions.join('|')}> <service...> [--bundle id | --app path | --dir configDir]`);
+    return 2;
+  }
+  let id = str(flags.bundle);
+  if (!id) {
+    const appPath = str(flags.app) ?? (await loadConfig(resolve(str(flags.dir) ?? process.cwd()))).app?.path;
+    if (!appPath) throw new Error('no app: pass --bundle <id> or --app <path>, or run where dtf.config.ts configures one');
+    id = await appIdentity(appPath);
+  }
+  if (!services.length) {
+    if (action !== 'reset') { console.error('name at least one service, e.g. ScreenCapture'); return 2; }
+    services = ['All'];
+  }
+
+  const driver = await createDriver();
+  await driver.start(); // the Windows driver goes through its helper
+  try {
+    for (const svc of services) {
+      if (action === 'status') {
+        console.log(`  ${svc.padEnd(28)} ${await driver.readPermission(svc, id)}`);
+      } else if (action === 'reset') {
+        await driver.resetPermission(svc, id);
+        console.log(`  reset   ${svc} for ${id}`);
+      } else {
+        if (!driver.setPermission) throw new Error(`${driver.platformName} cannot ${action} permissions from a script`);
+        await driver.setPermission(svc, id, action === 'grant' ? 'allowed' : 'denied');
+        console.log(`  ${action === 'grant' ? 'granted' : 'denied '} ${svc} for ${id} → now ${await driver.readPermission(svc, id)}`);
+      }
+    }
+  } finally {
+    await driver.stop().catch(() => {});
+  }
   return 0;
 }
 
@@ -281,6 +328,9 @@ async function main(): Promise<number> {
 
     case 'inspect':
       return inspect(positional[1] ?? 'tree', flags);
+
+    case 'permissions':
+      return permissions(positional[1], positional.slice(2), flags);
 
     case 'list': {
       const files = await collectTests({ dir: positional[1] });
