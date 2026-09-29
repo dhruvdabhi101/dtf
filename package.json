@@ -73,7 +73,6 @@
     "url": "git+https://github.com/dhruvdabhi101/dtf.git"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   }
 }

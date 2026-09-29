@@ -5,8 +5,9 @@ name: Release
 #
 # Each native driver is built on its own OS, then one job gathers both into the
 # package, so a single tarball works on macOS and Windows with no toolchain on
-# the installing machine. Publishing uses npm Trusted Publishing (OIDC): no
-# token secret, and the package gets a provenance attestation.
+# the installing machine. Publishing uses npm Trusted Publishing (OIDC), or the
+# NPM_TOKEN secret before that is set up. No --provenance: npm refuses it for a
+# private repository.
 
 on:
   push:
