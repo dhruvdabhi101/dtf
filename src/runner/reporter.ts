@@ -1,5 +1,5 @@
 import { writeFile, mkdir } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 export type SerializedError = {
   name: string;
@@ -178,7 +178,8 @@ export class JUnitReporter implements Reporter {
     if (e.type !== 'run-done') return;
     const byFile = new Map<string, TestResult[]>();
     for (const r of e.summary.results) {
-      const key = relative(this.#cwd, r.file);
+      // Forward slashes on every OS, so CI report viewers group suites the same way.
+      const key = relative(this.#cwd, r.file).split(sep).join('/');
       byFile.set(key, [...(byFile.get(key) ?? []), r]);
     }
     const suites = [...byFile].map(([file, results]) => {

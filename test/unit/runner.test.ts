@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { JUnitReporter, createReporters, serializeError, PrettyReporter, StreamReporter } from '../../src/runner/reporter.ts';
 import { resolveApp, expandPath } from '../../src/runner/config.ts';
@@ -54,9 +54,9 @@ test('errors serialise with their assertion details', () => {
 
 test('per-platform app paths resolve for the current platform only', () => {
   const app = { path: { darwin: 'build/My.app', win32: 'build\\My.exe' }, isolatedUserData: true };
-  assert.equal(resolveApp(app, '/proj', 'darwin')?.path, '/proj/build/My.app');
+  assert.equal(resolveApp(app, '/proj', 'darwin')?.path, resolve('/proj', 'build/My.app'));
   assert.equal(resolveApp(app, '/proj', 'linux'), undefined);
-  assert.equal(resolveApp({ path: '/abs/App.app' }, '/proj', 'darwin')?.path, '/abs/App.app');
+  assert.equal(resolveApp({ path: '/abs/App.app' }, '/proj', 'darwin')?.path, resolve('/abs/App.app'));
   assert.equal(resolveApp(app, '/proj', 'darwin')?.isolatedUserData, true);
 });
 
@@ -69,5 +69,5 @@ test('app paths expand ~, %VAR% and $VAR', () => {
   assert.equal(expandPath('${APPS}/My.app', env), '/opt/apps/My.app');
   assert.equal(expandPath('build/~weird/My.app', env), 'build/~weird/My.app');
   assert.throws(() => expandPath('%NOPE%\\X.exe', env), /NOPE/);
-  assert.equal(resolveApp({ path: { win32: '$APPS/My.exe' } }, '/proj', 'win32', env)?.path, '/opt/apps/My.exe');
+  assert.equal(resolveApp({ path: { win32: '$APPS/My.exe' } }, '/proj', 'win32', env)?.path, resolve('/opt/apps/My.exe'));
 });
