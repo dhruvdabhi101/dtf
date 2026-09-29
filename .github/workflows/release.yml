@@ -56,7 +56,9 @@ jobs:
 
   publish:
     needs: [native-macos, native-windows]
-    runs-on: ubuntu-latest
+    # macOS, not Windows: packing on Windows would drop the executable bit
+    # from the macOS driver.
+    runs-on: macos-latest
     timeout-minutes: 10
     permissions:
       contents: read
