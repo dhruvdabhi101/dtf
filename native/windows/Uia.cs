@@ -352,9 +352,15 @@ sealed class Props
         else if (p.ControlType == CT.Text) p.Value = p.Title;
         else if (p.HasSelect && p.Selected is bool sel) p.Value = sel ? 1 : 0;
 
-        // Subroles the framework relies on: window kinds, and the title bar
-        // buttons `WindowHandle.close()` looks for.
-        if (p.ControlType == CT.Window)
+        // Subroles the framework relies on: window kinds, password fields (the
+        // macOS name, so `{ subrole: 'AXSecureTextField' }` finds a login
+        // form's password box on both platforms), and the title bar buttons
+        // `WindowHandle.close()` looks for.
+        if (p.ControlType == CT.Edit && Uia.Bool(e, P.IsPassword) == true)
+        {
+            p.Subrole = "AXSecureTextField";
+        }
+        else if (p.ControlType == CT.Window)
         {
             var isDialog = Uia.Bool(e, P.IsDialog) == true || p.ClassName == "#32770";
             p.Subrole = isDialog ? "AXDialog" : "AXStandardWindow";

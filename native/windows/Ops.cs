@@ -240,8 +240,9 @@ static class Ops
             case "tray.open":
                 return Tray.Open(args);
             case "tray.close":
-                // Escape reliably dismisses a tracking menu and the overflow flyout.
-                Input.Key("escape");
+                // Escape dismisses a tracking menu and the overflow flyout;
+                // Tray.Close also makes sure a popover really went away.
+                Tray.Close();
                 return Ok;
 
             // ── Application menu bar ───────────────────────────────────────
@@ -499,8 +500,15 @@ static class Elements
     {
         // SetFocus needs the window to be foreground for keyboard input to
         // follow; the framework types right after focusing.
+        // Keystrokes go to the foreground window, whatever was focused: if the
+        // element's window cannot be brought forward, typing would land in
+        // another app (a terminal, an editor). Fail instead.
         var h = Apps.TopLevelHwndOf(e);
-        if (h != IntPtr.Zero && GetForegroundWindow() != h) Apps.Activate(Pid(h));
+        if (h != IntPtr.Zero && GetForegroundWindow() != h && !Apps.ActivateWindow(h) && !Apps.ActivateWindow(h))
+        {
+            throw new OpError("notForeground",
+                $"could not bring '{WindowText(h)}' ({ClassName(h)}) to the foreground to type into it; Windows kept '{WindowText(GetForegroundWindow())}' in front");
+        }
         try { e.SetFocus(); } catch (Exception ex) { throw new OpError("actionFailed", $"SetFocus failed: {ex.Message}"); }
     }
 

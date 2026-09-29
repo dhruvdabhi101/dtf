@@ -176,6 +176,7 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
         for (const svc of list) await driver.setPermission(svc, id, state);
       }
     }
+    await cfg.beforeLaunch?.();
     return DesktopApp.launch(driver, cfg.app);
   };
 
@@ -297,6 +298,13 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
           error: serializeError(lastError),
           attachments,
         };
+        const exit = app?.exited;
+        if (status === 'failed' && exit && result.error) {
+          // Otherwise this reads as an empty tray or a missing window.
+          const how = exit.signal ? `signal ${exit.signal}` : `code ${exit.code}`;
+          const when = exit.at < t0 ? 'before this test started' : `${Math.round((exit.at - t0) / 1000)}s into this test`;
+          result.error.message += `\n(the app under test is not running: it exited with ${how} ${when}; see the app log)`;
+        }
 
         if (status === 'failed' && cfg.screenshotOnFailure) {
           // Failure artifacts are the whole game in desktop testing: without the

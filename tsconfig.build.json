@@ -1,0 +1,13 @@
+{
+  // Compiles src/ to dist/ for the published package. Node will not strip
+  // types from files under node_modules, so installs must run plain JS.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*.ts"]
+}

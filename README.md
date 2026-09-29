@@ -55,13 +55,20 @@ accessibility and input layers. That is what this framework is.
 
 ## Install
 
-Requires **macOS**, **Node ≥ 22.18**, and the **Xcode Command Line Tools**
-(`xcode-select --install`) to compile the native driver.
+Requires **macOS** or **Windows** and **Node ≥ 22.18**. The package ships
+prebuilt native drivers (universal macOS, Windows x64), so no Swift or .NET
+toolchain is needed to install it.
 
 ```bash
-npm install          # also builds the native helper
+npm install -D @dhruvdabhi101/dtf
 npx dtf doctor
 ```
+
+From a git checkout, `npm install` builds the driver from source instead
+(Xcode Command Line Tools on macOS, .NET 8 SDK on Windows);
+`DTF_FORCE_NATIVE_BUILD=1 npm run build:native` rebuilds it after editing the
+native sources. Releases are published by `.github/workflows/release.yml` on a
+`v*` tag.
 
 `dtf doctor` is a preflight worth running first. Desktop test runs fail for
 environmental reasons far more often than for code reasons, and it turns a
@@ -91,7 +98,7 @@ npx dtf studio    # opens the Studio in your browser
 
 ```ts
 // dtf.config.ts
-import { defineConfig } from 'dtf';
+import { defineConfig } from '@dhruvdabhi101/dtf';
 
 export default defineConfig({
   app: {

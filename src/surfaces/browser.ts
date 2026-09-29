@@ -5,6 +5,12 @@ import { join } from 'node:path';
 import type { Driver } from '../drivers/driver.ts';
 import { waitFor } from '../core/wait.ts';
 import { AssertionError } from '../core/errors.ts';
+import { managedChrome } from '../browsers/managed.ts';
+import { CdpPage } from '../browsers/cdp.ts';
+
+/** What dtf keeps for a browser it launched: its debugging connection and the custom-scheme URLs it tried to open. */
+type Isolated = { cdp: CdpPage | null; schemeUrls: string[]; waiters: Set<() => void> };
+const isolated = new WeakMap<object, Isolated>();
 
 /**
  * The browser, as a testable surface.
@@ -77,6 +83,23 @@ const CHROMIUM_BROWSERS = [
 const NOT_CHROMIUM = ['com.apple.Safari', 'com.apple.SafariTechnologyPreview', 'org.mozilla.firefox'];
 
 const BROWSERISH =/browser|chrome|chromium|safari|firefox|webkit|arc|brave|edge|opera|vivaldi|helium|orion|zen/i;
+
+const labelOf = (n: { title?: string; description?: string }) => n.title || n.description || '';
+
+/**
+ * The "open the app" button(s) of a browser's external-protocol prompt.
+ *
+ * Chrome labels the button "Open <App>" (the name is unknown and localised);
+ * Edge says "This site is trying to open <App>." over a bare "Open". A bare
+ * "Open" only counts beside a "Cancel", so no other "Open" in the browser's
+ * chrome is mistaken for it. Chromium's Views controls put their label in
+ * AXDescription rather than AXTitle, so matching on title alone finds nothing.
+ */
+function openButtons<T extends { title?: string; description?: string }>(buttons: T[]): T[] {
+  const named = buttons.filter((b) => /^open\s+\S/i.test(labelOf(b)));
+  if (named.length) return named;
+  return buttons.some((b) => /^cancel$/i.test(labelOf(b))) ? buttons.filter((b) => /^open$/i.test(labelOf(b))) : [];
+}
 
 export type OpenPage = {
   browser: string;
@@ -275,7 +298,7 @@ export class BrowserSurface {
     const { DesktopApp } = await import('../app.ts');
     const profile = await mkdtemp(join(tmpdir(), 'dtf-browser-'));
 
-    return DesktopApp.launch(this.#driver, {
+    const session = await DesktopApp.launch(this.#driver, {
       path: appPath,
       timeoutMs: opts.timeoutMs ?? 30_000,
       args: [
@@ -284,20 +307,108 @@ export class BrowserSurface {
         '--no-first-run',
         '--no-default-browser-check',
         '--disable-features=Translate,OptimizationGuideModelDownloading',
+        // A debugging connection: see below.
+        '--remote-debugging-port=0',
+        // Edge on Windows signs a new profile into the machine's Microsoft
+        // account on its own and then covers the page with its sync prompt.
+        // InPrivate has no account, no sync and still starts logged out.
+        ...(/msedge/i.test(appPath) ? ['--inprivate'] : []),
         ...(opts.extraArgs ?? []),
         url,
       ],
     });
+    // A browser started from a background process opens behind whatever is in
+    // front (Windows' foreground lock), so bring its window up: typing into
+    // the page and the Open prompt's keyboard fallback both need it in front.
+    await waitFor(async () => (await this.#driver.windowList(session.pid).catch(() => [])).length > 0 || undefined, {
+      timeoutMs: 15_000, intervalMs: 250, description: 'the browser window',
+    }).catch(() => {});
+    await this.#driver.activate(session.pid).catch(() => {});
+
+    // Over the debugging connection: (1) make sure the page actually loads. A
+    // URL passed on the command line sometimes leaves the first tab on
+    // about:blank ("Untitled"), and a login form never appears. (2) record
+    // every custom-scheme navigation (myapp://callback?…) the page makes, so
+    // `waitForProtocolUrl` can hand it to the app directly. Without it the
+    // only route is the OS protocol handler, which on Windows starts a new
+    // app process that knows nothing of a test's --user-data-dir.
+    const state: Isolated = { cdp: null, schemeUrls: [], waiters: new Set() };
+    isolated.set(session, state);
+    try {
+      const cdp = await CdpPage.connect(profile);
+      state.cdp = cdp;
+      cdp.on('Page.frameRequestedNavigation', ({ url: to }: { url: string }) => {
+        if (/^[a-z][a-z0-9+.-]*:/i.test(to) && !/^(https?|about|data|blob|javascript|chrome|edge|file):/i.test(to)) {
+          state.schemeUrls.push(to);
+          for (const w of state.waiters) w();
+        }
+      });
+      await cdp.send('Page.enable');
+      await cdp.send('Runtime.enable');
+      await new Promise((r) => setTimeout(r, 1500));
+      const at = await cdp.evaluate<string>('location.href').catch(() => '');
+      if (!at || at === 'about:blank') await cdp.send('Page.navigate', { url });
+    } catch {
+      // No debugging connection (a browser that refuses the switch): the
+      // command-line URL is all there is, as before.
+    }
+    return session;
   }
 
   /**
-   * Picks the browser `launchIsolated` drives. It has to be Chromium-based:
-   * Safari and Firefox ignore the profile and accessibility flags, and Safari
-   * does not even open the URL passed on its command line, so "the default
-   * browser" is only used when it qualifies. Otherwise the first installed
-   * Chromium browser wins.
+   * The next custom-scheme URL (`scheme://…`) a browser from `launchIsolated`
+   * navigated to, such as an OAuth redirect back into the app. Resolves with
+   * one already seen. The browser's own "Open <App>?" prompt is left alone:
+   * hand the URL to the app yourself, e.g. with `app.openDeepLink(url)`.
+   */
+  async waitForProtocolUrl(session: object, scheme: string, opts: { timeoutMs?: number } = {}): Promise<string> {
+    const state = isolated.get(session);
+    if (!state?.cdp) throw new Error('waitForProtocolUrl needs a browser from launchIsolated with a debugging connection');
+    const prefix = `${scheme.replace(/:\/*$/, '')}:`.toLowerCase();
+    const find = () => state.schemeUrls.find((u) => u.toLowerCase().startsWith(prefix));
+    const timeoutMs = opts.timeoutMs ?? 60_000;
+    return await new Promise<string>((resolve, reject) => {
+      const hit = find();
+      if (hit) return resolve(hit);
+      const timer = setTimeout(() => {
+        state.waiters.delete(check);
+        reject(new AssertionError(`the browser never navigated to a ${prefix}// URL within ${timeoutMs}ms`));
+      }, timeoutMs);
+      const check = () => {
+        const u = find();
+        if (!u) return;
+        clearTimeout(timer);
+        state.waiters.delete(check);
+        resolve(u);
+      };
+      state.waiters.add(check);
+    });
+  }
+
+  /** Presses Cancel on the browser's "Open <App>?" prompt, if `pid` is showing one. True if it did. */
+  async cancelProtocolPrompt(pid: number): Promise<boolean> {
+    const buttons = await this.#driver.findAll({ pid }, [{ role: 'AXButton', maxDepth: 20 }]).catch(() => []);
+    if (!openButtons(buttons).length) return false;
+    const cancel = buttons.filter((b) => /^cancel$/i.test(labelOf(b))).pop();
+    if (!cancel) return false;
+    await this.#driver.elementAction(cancel.ref, 'AXPress').catch(() => {});
+    return true;
+  }
+
+  /**
+   * Picks the browser `launchIsolated` drives. dtf's own Chrome for Testing
+   * comes first when `dtf install-browser` has put it there: it behaves the
+   * same on every machine. Otherwise it has to be an installed Chromium-based
+   * browser: Safari and Firefox ignore the profile and accessibility flags, and
+   * Safari does not even open the URL passed on its command line, so "the
+   * default browser" is only used when it qualifies. Otherwise the first
+   * installed Chromium browser wins.
    */
   async #chromiumBrowser(requested?: string): Promise<{ bundleId: string; appPath: string }> {
+    if (!requested) {
+      const managed = await managedChrome();
+      if (managed) return { bundleId: 'chrome-for-testing', appPath: managed.path };
+    }
     const candidates = requested ? [requested] : [
       (await this.defaultBrowser()) ?? '',
       ...CHROMIUM_BROWSERS,
@@ -313,6 +424,16 @@ export class BrowserSurface {
         : `launchIsolated needs a Chromium-based browser (Chrome, Edge, Brave, Arc, …) and none is installed; ` +
             `the default browser (${await this.defaultBrowser()}) is not Chromium-based`,
     );
+  }
+
+  /**
+   * Whether the browser process `pid` is showing its "Open <App>?" prompt
+   * right now (Chrome's "Open <App>", Edge's "Open" / "Cancel"). Looks only;
+   * presses nothing.
+   */
+  async hasProtocolPrompt(pid: number): Promise<boolean> {
+    const buttons = await this.#driver.findAll({ pid }, [{ role: 'AXButton', maxDepth: 20 }]).catch(() => []);
+    return openButtons(buttons).length > 0;
   }
 
   /**
@@ -339,16 +460,11 @@ export class BrowserSurface {
     opts: { always?: boolean; timeoutMs?: number; settleMs?: number } = {},
   ): Promise<void> {
     const timeoutMs = opts.timeoutMs ?? 15_000;
-    const labelOf = (n: { title?: string; description?: string }) => n.title || n.description || '';
-
     const candidates = await waitFor(async () => {
       const buttons = await this.#driver
         .findAll({ pid: session.pid }, [{ role: 'AXButton', maxDepth: 20 }])
         .catch(() => []);
-      // "Open <App>" and not "Cancel"; the app name is unknown and localised.
-      // Chromium's Views controls put their label in AXDescription rather than
-      // AXTitle, so matching on title alone finds nothing at all.
-      const found = buttons.filter((b) => /^open\s+\S/i.test(labelOf(b)));
+      const found = openButtons(buttons);
       return found.length ? found : undefined;
     }, { timeoutMs, intervalMs: 300, description: "the browser's \"Open <App>?\" confirmation" })
       .catch(async () => {
@@ -389,8 +505,11 @@ export class BrowserSurface {
     // be mistaken for success.
     const stillOpen = async () => {
       const buttons = await this.#driver.findAll({ pid: session.pid }, [{ role: 'AXButton', maxDepth: 20 }]);
-      return buttons.some((b) => /^open\s+\S/i.test(labelOf(b)));
+      return openButtons(buttons).length > 0;
     };
+
+    // In front, so the Enter fallback below reaches this browser and nothing else.
+    await this.#driver.activate(session.pid).catch(() => {});
 
     // Let the bubble finish appearing before pressing it. Caught early, mid
     // animation, the widget accepts the press and simply closes without ever
@@ -398,7 +517,7 @@ export class BrowserSurface {
     await new Promise((r) => setTimeout(r, opts.settleMs ?? 2000));
     const settled = await this.#driver
       .findAll({ pid: session.pid }, [{ role: 'AXButton', maxDepth: 20 }])
-      .then((buttons) => buttons.filter((b) => /^open\s+\S/i.test(labelOf(b))))
+      .then(openButtons)
       .catch(() => candidates);
 
     for (const candidate of [...(settled.length ? settled : candidates)].reverse()) {

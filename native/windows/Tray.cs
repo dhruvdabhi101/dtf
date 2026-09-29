@@ -125,21 +125,25 @@ static class Tray
             }
         }
 
+        // Resolve ownership for anything on screen that is still anonymous.
+        foreach (var item in items.Where(i => i.Pid == 0)) ResolveOwner(item);
+
         // Icons the registry knows but nothing on screen shows: hidden in the
-        // Windows 11 overflow while the flyout is closed.
+        // Windows 11 overflow while the flyout is closed. Many apps (Electron
+        // among them) create the icon first and set its tooltip afterwards, so
+        // InitialTooltip is often empty; such entries are keyed on the exe alone.
         foreach (var (tooltip, exe, _) in RegistrySettings())
         {
-            if (string.IsNullOrEmpty(tooltip) || exe == null) continue;
-            if (items.Any(i => Norm(i.Label) == Norm(tooltip))) continue;
+            if (exe == null) continue;
+            if (!string.IsNullOrEmpty(tooltip) && items.Any(i => Norm(i.Label) == Norm(tooltip))) continue;
             var pids = PidsForExe(exe);
             if (pids.Count == 0) continue; // not running: no icon to show
-            var item = new TrayItem { Label = tooltip, Title = tooltip, Hidden = true, ExePath = exe };
+            if (items.Any(i => i.Pid == pids[0] || (i.ExePath != null && string.Equals(i.ExePath, exe, StringComparison.OrdinalIgnoreCase)))) continue;
+            var label = string.IsNullOrEmpty(tooltip) ? Apps.Name(pids[0]) : tooltip;
+            var item = new TrayItem { Label = label, Title = string.IsNullOrEmpty(tooltip) ? null : tooltip, Hidden = true, ExePath = exe };
             SetOwner(item, pids[0]);
             if (seen.Add(Key(item))) items.Add(item);
         }
-
-        // Resolve ownership for anything still anonymous.
-        foreach (var item in items.Where(i => i.Pid == 0)) ResolveOwner(item);
         return items;
     }
 
@@ -186,14 +190,18 @@ static class Tray
         foreach (var (_, exe, _) in settings)
         {
             if (exe == null) continue;
-            foreach (var pid in PidsForExe(exe))
-            {
-                var name = Norm(Apps.Name(pid));
-                var stem = Norm(Path.GetFileNameWithoutExtension(exe));
-                if (name.Length > 0 && (label == name || label.StartsWith(name + " ") || label == stem)) { SetOwner(item, pid); return; }
-            }
+            var pids = PidsForExe(exe);
+            if (pids.Count == 0) continue;
+            // Only the main process registers the icon: match on it, not on a helper.
+            var name = Norm(Apps.Name(pids[0]));
+            var stem = Norm(Path.GetFileNameWithoutExtension(exe));
+            if (NamedAfter(label, name) || NamedAfter(label, stem)) { SetOwner(item, pids[0]); item.ExePath = exe; return; }
         }
     }
+
+    /// <summary>"Worktrace", "Worktrace - Not signed in", "Worktrace: 3 new" are all named after "worktrace".</summary>
+    static bool NamedAfter(string label, string name) =>
+        name.Length > 0 && label.StartsWith(name, StringComparison.Ordinal) && (label.Length == name.Length || !char.IsLetterOrDigit(label[name.Length]));
 
     /// <summary>Re-resolves a tray hit from a recorder click to a full item (ownership included).</summary>
     public static TrayItem? Resolve(Props hit)
@@ -271,10 +279,49 @@ static class Tray
                     if (path != null && string.Equals(path, exe, StringComparison.OrdinalIgnoreCase)) pids.Add((uint)proc.Id);
                 }
             }
+            // Multi-process apps (Electron, Chromium, WebView2 hosts) run the same
+            // exe as renderer, GPU and utility children. The icon belongs to the
+            // root: the one whose parent is not itself this exe. Put roots first.
+            if (pids.Count > 1)
+            {
+                var parents = ParentPids();
+                var set = new HashSet<uint>(pids);
+                pids = pids.OrderBy(p => parents.TryGetValue(p, out var pp) && set.Contains(pp) ? 1 : 0).ThenBy(p => p).ToList();
+            }
         }
         catch { }
         _pidCache[exe] = (pids, DateTime.UtcNow);
         return pids;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct PROCESSENTRY32W
+    {
+        public uint dwSize, cntUsage, th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID, cntThreads, th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool Process32FirstW(IntPtr snap, ref PROCESSENTRY32W e);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool Process32NextW(IntPtr snap, ref PROCESSENTRY32W e);
+
+    /// <summary>pid → parent pid for every running process.</summary>
+    static Dictionary<uint, uint> ParentPids()
+    {
+        var map = new Dictionary<uint, uint>();
+        var snap = CreateToolhelp32Snapshot(0x2 /* TH32CS_SNAPPROCESS */, 0);
+        if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return map;
+        try
+        {
+            var e = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32W>() };
+            for (var ok = Process32FirstW(snap, ref e); ok; ok = Process32NextW(snap, ref e)) map[e.th32ProcessID] = e.th32ParentProcessID;
+        }
+        finally { CloseHandle(snap); }
+        return map;
     }
 
     /// <summary>Flips IsPromoted for every icon entry of the process's executable. Returns true if anything changed.</summary>
@@ -423,7 +470,10 @@ static class Tray
         }
         else if (entry is HiddenTrayIcon hidden)
         {
-            item = Enumerate().FirstOrDefault(i => Norm(i.Label) == Norm(hidden.Tooltip));
+            var all = Enumerate();
+            // Prefer the on-screen copy (promoted since listing), then any match.
+            item = all.FirstOrDefault(i => !i.Hidden && SameIcon(i, hidden.Tooltip, hidden.ExePath))
+                ?? all.FirstOrDefault(i => SameIcon(i, hidden.Tooltip, hidden.ExePath));
         }
         if (item == null) throw new OpError("staleRef", "tray item is gone; re-list the tray");
 
@@ -434,23 +484,58 @@ static class Tray
         }
 
         var pid = item.Pid;
+        var maxDepth = a.Int("maxDepth");
+
+        // The previous popup may still be on screen: fading out after a close
+        // (Chromium menus animate), or never closed because Escape went to a
+        // window that did not own it. Wait it out; if it really is still open,
+        // it is the answer, since clicking the icon again would toggle it shut.
+        if (_lastContent != IntPtr.Zero && !AwaitClosed(700) && Uia.FromHandle(_lastContent) is { } still)
+        {
+            var isMenu = ClassName(_lastContent) == "#32768" || Uia.Int(still, P.ControlType) == CT.Menu;
+            return Content(isMenu ? "menu" : "window", still, maxDepth ?? (isMenu ? 6 : 8));
+        }
+
+        // A click on the icon just after its menu closed is swallowed (Electron
+        // treats it as the tail of the dismissal), so leave a gap.
+        var sinceClose = DateTime.UtcNow - _closedAt;
+        if (sinceClose < ReopenGap) Thread.Sleep(ReopenGap - sinceClose);
+
         var before = pid == 0 ? new HashSet<long>() : new HashSet<long>(Apps.Windows(pid, includeTools: true).Concat(Popups.Windows(pid)).Select(h => h.ToInt64()));
         var beforeMenus = new HashSet<long>(TopLevelWindows().Where(h => IsWindowVisible(h) && ClassName(h) == "#32768").Select(h => h.ToInt64()));
 
-        var (cx, cy) = item.Rect!.Value.Center;
-        Input.Click(cx, cy, a.Str("button") ?? "left");
+        // Where the icon is now, not where it was when listed: the taskbar
+        // reflows whenever another icon comes or goes (a location or mic
+        // indicator appears the moment a browser uses it), and a stale rect
+        // clicks the neighbour.
+        var clickedAt = CurrentRect(item) ?? item.Rect!.Value;
+        Input.Click(clickedAt.Center.Item1, clickedAt.Center.Item2, a.Str("button") ?? "left");
 
         var timeout = a.Int("timeoutMs") ?? 3000;
         var deadline = DateTime.UtcNow.AddMilliseconds(timeout);
+        var recheckAt = DateTime.UtcNow.AddMilliseconds(timeout / 2);
         while (DateTime.UtcNow < deadline)
         {
+            // Nothing yet and the icon has moved since the click: it landed on
+            // whatever slid into that spot. Click where the icon is now.
+            if (recheckAt != DateTime.MaxValue && DateTime.UtcNow >= recheckAt)
+            {
+                recheckAt = DateTime.MaxValue;
+                if (CurrentRect(item) is Rect now && (Math.Abs(now.X - clickedAt.X) > 2 || Math.Abs(now.Y - clickedAt.Y) > 2))
+                {
+                    Program.Warn($"tray: icon moved from {clickedAt.X},{clickedAt.Y} to {now.X},{now.Y} during the click; clicking again");
+                    clickedAt = now;
+                    Input.Click(now.Center.Item1, now.Center.Item2, a.Str("button") ?? "left");
+                    deadline = DateTime.UtcNow.AddMilliseconds(timeout);
+                }
+            }
             // 1. A Win32 context menu, from any process if ownership is unknown.
             foreach (var h in TopLevelWindows())
             {
                 if (!IsWindowVisible(h) || ClassName(h) != "#32768" || beforeMenus.Contains(h.ToInt64())) continue;
                 if (pid != 0 && Pid(h) != pid) continue;
                 var el2 = Uia.FromHandle(h);
-                if (el2 != null) return Content("menu", el2, a.Int("maxDepth") ?? 6);
+                if (el2 != null) { _lastContent = h; return Content("menu", el2, maxDepth ?? 6); }
             }
             if (pid != 0)
             {
@@ -461,12 +546,70 @@ static class Tray
                     var el2 = Uia.FromHandle(h);
                     if (el2 == null) continue;
                     var isMenu = Uia.Int(el2, P.ControlType) == CT.Menu;
-                    return Content(isMenu ? "menu" : "window", el2, a.Int("maxDepth") ?? (isMenu ? 6 : 8));
+                    if (IsTransient(h)) _lastContent = h;
+                    return Content(isMenu ? "menu" : "window", el2, maxDepth ?? (isMenu ? 6 : 8));
                 }
             }
             Thread.Sleep(100);
         }
         throw new OpError("trayNoContent", $"tray item was clicked but produced no menu or window within {timeout}ms");
+    }
+
+    /// <summary>
+    /// The icon's on-screen rect right now. Explorer can rebuild the taskbar's
+    /// buttons on reflow, so a dead element falls back to a fresh listing.
+    /// </summary>
+    static Rect? CurrentRect(TrayItem item)
+    {
+        if (item.Element != null && Uia.Refresh(item.Element) is { } el && Props.Read(el, null).Rect is Rect r) return r;
+        var again = Enumerate().FirstOrDefault(i => !i.Hidden && i.Rect != null && ((item.Pid != 0 && i.Pid == item.Pid) || SameIcon(i, item.Label, item.ExePath)));
+        return again?.Rect;
+    }
+
+    /// <summary>The window the last successful Open returned, when it is a transient popup.</summary>
+    static IntPtr _lastContent;
+
+    /// <summary>
+    /// A popup that goes away on its own (a menu, a Chromium menu window), as
+    /// opposed to an ordinary app window a tray click happened to open.
+    /// </summary>
+    static bool IsTransient(IntPtr h) =>
+        ClassName(h) == "#32768" || ((ExStyle(h) & WS_EX_TOOLWINDOW) != 0 && (Style(h) & WS_CAPTION) != WS_CAPTION);
+
+    /// <summary>
+    /// Waits up to `ms` for the last opened popup to leave the screen. True
+    /// when it is gone (or there was none).
+    /// </summary>
+    public static bool AwaitClosed(int ms)
+    {
+        var h = _lastContent;
+        if (h == IntPtr.Zero) return true;
+        var deadline = DateTime.UtcNow.AddMilliseconds(ms);
+        while (IsWindow(h) && IsWindowVisible(h))
+        {
+            if (DateTime.UtcNow >= deadline) return false;
+            Thread.Sleep(50);
+        }
+        _lastContent = IntPtr.Zero;
+        _closedAt = DateTime.UtcNow;
+        return true;
+    }
+
+    static DateTime _closedAt = DateTime.MinValue;
+    static readonly TimeSpan ReopenGap = TimeSpan.FromMilliseconds(700);
+
+    /// <summary>
+    /// Dismisses the open popup. Escape goes to the focused window, which is
+    /// not always the popup (a popover can open without taking focus), so a
+    /// popup that outlives it gets focus and a second Escape.
+    /// </summary>
+    public static void Close()
+    {
+        Input.Key("escape");
+        if (AwaitClosed(600)) return;
+        SetForegroundWindow(_lastContent);
+        Input.Key("escape");
+        AwaitClosed(600);
     }
 
     static Dictionary<string, object?> Content(string kind, IUIAutomationElement root, int depth)
@@ -486,8 +629,14 @@ static class Tray
         });
         if (chevron?.Element == null) return null;
         Elements.Perform(chevron.Element, "AXPress");
-        var found = Ops.WaitFor(2500, () => Enumerate().FirstOrDefault(i => !i.Hidden && i.Rect != null && Norm(i.Label) == Norm(item.Label)), 150);
+        var found = Ops.WaitFor(2500, () => Enumerate().FirstOrDefault(i => !i.Hidden && i.Rect != null && SameIcon(i, item.Label, item.ExePath)), 150);
         if (found != null && found.Pid == 0) { found.Pid = item.Pid; found.App = item.App; found.BundleId = item.BundleId; }
         return found;
     }
+
+    /// <summary>Whether `i` is the icon known by `label` / `exe`: same label, same exe, or a label named after it.</summary>
+    static bool SameIcon(TrayItem i, string label, string? exe) =>
+        Norm(i.Label) == Norm(label)
+        || (exe != null && i.ExePath != null && string.Equals(i.ExePath, exe, StringComparison.OrdinalIgnoreCase))
+        || NamedAfter(Norm(i.Label), Norm(label));
 }

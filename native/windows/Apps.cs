@@ -191,7 +191,12 @@ static class Apps
     {
         var wins = Windows(pid);
         if (wins.Count == 0) return false;
-        var target = wins.FirstOrDefault(h => GetWindow(h, GW_OWNER) == IntPtr.Zero, wins[0]);
+        return ActivateWindow(wins.FirstOrDefault(h => GetWindow(h, GW_OWNER) == IntPtr.Zero, wins[0]));
+    }
+
+    /// <summary>Brings one window to the foreground, past the foreground lock if need be. True if it got there.</summary>
+    public static bool ActivateWindow(IntPtr target)
+    {
         if (IsIconic(target)) ShowWindow(target, SW_RESTORE);
         if (GetForegroundWindow() == target) return true;
 

@@ -36,6 +36,12 @@ export type DTFConfig = {
   slowMoMs?: number;
   /** Clear stray notifications and modals before each test. */
   cleanSlate?: boolean;
+  /**
+   * Runs before every launch of the app (once per file or per test, by
+   * `lifecycle`). For state outside the user-data dir that a force-killed
+   * previous instance can leave behind: lock files, sockets, named pipes.
+   */
+  beforeLaunch?: () => void | Promise<void>;
   /** Reset these privacy grants before each launch, to test first-run flows. */
   resetPermissions?: string[];
   /**
@@ -59,7 +65,7 @@ export type DTFConfig = {
 /** The config after loading: the app path is resolved for this platform. */
 export type ResolvedConfig = Omit<DTFConfig, 'app'> & { app?: LaunchOptions; configFile?: string };
 
-export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'grantPermissions' | 'denyPermissions' | 'attach' | 'slowMoMs'>> = {
+export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'grantPermissions' | 'denyPermissions' | 'attach' | 'slowMoMs' | 'beforeLaunch'>> = {
   lifecycle: 'per-file',
   testMatch: ['**/*.spec.ts', '**/*.test.ts'],
   artifactsDir: 'dtf-artifacts',

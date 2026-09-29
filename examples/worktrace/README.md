@@ -40,7 +40,7 @@ complementary — keep both.
 ## Moving it into the Worktrace repo
 
 Copy this directory to `~/work/screenpipe/dtf/` and change the imports in
-`dtf.config.ts` and the specs from `'../../src/index.ts'` to `'dtf'`. Paths in
+`dtf.config.ts` and the specs from `'../../src/index.ts'` to `'@dhruvdabhi101/dtf'`. Paths in
 the config resolve relative to the config file, so nothing else changes.
 
 ## Safety

@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 
 import { EVENT_PREFIX, type RunEvent, type RunSummary, type TestResult } from '../runner/reporter.ts';
 
-const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli.ts');
+const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', import.meta.url.endsWith('.ts') ? 'cli.ts' : 'cli.js');
 
 export type RunRequest = {
   files?: string[];

@@ -14,9 +14,12 @@ export type DriverOptions = { onStderr?: (line: string) => void };
  * driver that has not been written yet is a clear error rather than a crash at
  * import time.
  */
+// Run from source this module is a .ts file; from the published package it is
+// compiled .js, and the drivers beside it share its extension.
+const EXT = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
 const DRIVERS: Partial<Record<NodeJS.Platform, { file: string; export: string }>> = {
-  darwin: { file: './macos.ts', export: 'MacOSDriver' },
-  win32: { file: './windows.ts', export: 'WindowsDriver' },
+  darwin: { file: `./macos${EXT}`, export: 'MacOSDriver' },
+  win32: { file: `./windows${EXT}`, export: 'WindowsDriver' },
 };
 
 export function isPlatformSupported(platform: NodeJS.Platform = process.platform): boolean {

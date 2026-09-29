@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 
 import { NativeHelper } from '../core/rpc.ts';
-import { UnsupportedError } from '../core/errors.ts';
+import { DriverError, UnsupportedError } from '../core/errors.ts';
 import type { Driver, PreflightCheck, Root, ScreenshotOptions, TreeOptions } from './driver.ts';
 import type {
   AXNode, AppInfo, Dialog, ElementContext, MouseButton, Notification, Rect,
@@ -149,7 +149,12 @@ export class WindowsDriver implements Driver {
   listApps() { return this.#helper.call<AppInfo[]>('app.list'); }
   findApps(q: { bundleId?: string; name?: string }) { return this.#helper.call<AppInfo[]>('app.find', q); }
   appInfo(pid: number) { return this.#helper.call<AppInfo>('app.info', { pid }); }
-  async activate(pid: number) { await this.#helper.call('app.activate', { pid }); }
+  async activate(pid: number) {
+    // Windows' foreground lock can refuse the switch. Say so, rather than let
+    // a caller's next keystroke land in whatever window stayed in front.
+    const { ok } = await this.#helper.call<{ ok: boolean }>('app.activate', { pid });
+    if (!ok) throw new DriverError('notForeground', `could not bring pid ${pid} to the foreground`, 'app.activate');
+  }
   setElectronAccessibility(pid: number) {
     return this.#helper.call<{ manualAccessibility: boolean; enhancedUserInterface: boolean }>(
       'app.enableElectronAccessibility', { pid },

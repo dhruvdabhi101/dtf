@@ -31,6 +31,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm run test:unit
+      - run: npm run build
 
   native-macos:
     # Compiling the Swift helper catches native breakage without needing a GUI.

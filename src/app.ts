@@ -87,6 +87,10 @@ export class DesktopApp {
   #appPath: string | null = null;
   #logs: LogLine[] = [];
   #attached = false;
+  #exit: { code: number | null; signal: string | null; at: number } | null = null;
+  #exe: string | null = null;
+  #launchArgs: string[] = [];
+  #launchEnv: NodeJS.ProcessEnv | undefined;
 
   readonly tray: TraySurface;
   readonly browser: BrowserSurface;
@@ -118,6 +122,14 @@ export class DesktopApp {
   get driver() { return this.#driver; }
   /** True when this app was attached to rather than launched by the framework. */
   get attached() { return this.#attached; }
+
+  /**
+   * How and when a launched app's process ended, or null while it runs (and
+   * always null for an attached app). An app that quits on its own, e.g. on
+   * a single-instance check, otherwise surfaces only as empty trays and
+   * missing windows.
+   */
+  get exited() { return this.#exit; }
 
   /** Everything the app wrote to stdout/stderr since launch. */
   get logs(): LogLine[] { return this.#logs; }
@@ -196,6 +208,10 @@ export class DesktopApp {
     app.#proc = proc;
     app.#userDataDir = userDataDir;
     app.#appPath = appPath;
+    app.#exe = exe;
+    app.#launchArgs = args;
+    app.#launchEnv = opts.env;
+    proc.once('exit', (code, signal) => { app.#exit = { code, signal, at: Date.now() }; });
 
     for (const stream of ['stdout', 'stderr'] as const) {
       const src = proc[stream];
@@ -296,9 +312,35 @@ export class DesktopApp {
    * machine with several builds of the same app installed will often deliver it
    * to whichever one it decides owns the scheme, which is a genuinely miserable
    * failure to debug.
+   *
+   * On Windows and Linux the OS delivers a deep link by starting the
+   * executable again with the URL as an argument, and Electron's
+   * single-instance lock forwards it to the running copy (`second-instance`).
+   * That lock belongs to the user-data dir, so an app launched on a test
+   * profile never receives a link the OS delivers: the OS starts it without
+   * `--user-data-dir`. For an app dtf launched, this starts the same
+   * executable with the launch's own arguments plus the URL, which reaches the
+   * running copy and exits.
    */
-  async openDeepLink(url: string): Promise<void> {
-    await this.#driver.openUrl(url, { appPath: this.#appPath ?? undefined, background: true });
+  async openDeepLink(url: string, opts: { timeoutMs?: number } = {}): Promise<void> {
+    if (process.platform === 'darwin' || !this.#exe) {
+      await this.#driver.openUrl(url, { appPath: this.#appPath ?? undefined, background: true });
+      return;
+    }
+    const timeoutMs = opts.timeoutMs ?? 20_000;
+    const child = spawn(this.#exe, [...this.#launchArgs, url], {
+      env: { ...process.env, ...(this.#launchEnv ?? {}) },
+      stdio: 'ignore',
+    });
+    const exited = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs);
+      child.once('exit', () => { clearTimeout(timer); resolve(true); });
+      child.once('error', () => { clearTimeout(timer); resolve(false); });
+    });
+    if (!exited) {
+      child.kill();
+      throw new Error(`the deep-link launch of ${basename(this.#exe)} did not hand the URL over and exit within ${timeoutMs}ms`);
+    }
   }
 
   // ── Teardown ─────────────────────────────────────────────────────────────

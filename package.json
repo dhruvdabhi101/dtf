@@ -1,18 +1,23 @@
 {
-  "name": "dtf",
+  "name": "@dhruvdabhi101/dtf",
   "version": "0.2.0",
   "description": "OS-level end-to-end testing for desktop apps: tray, notifications, native dialogs, permissions, menus and windows, with a recorder and a Studio UI.",
   "type": "module",
   "bin": {
-    "dtf": "./src/cli.ts"
+    "dtf": "./dist/cli.js"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
+    "build": "node ./scripts/build.mjs",
     "build:native": "node ./scripts/postinstall.mjs",
     "build:fixture": "node ./scripts/build-fixture.mjs",
     "postinstall": "node ./scripts/postinstall.mjs",
@@ -22,14 +27,21 @@
     "example:worktrace": "node ./src/cli.ts run examples/worktrace",
     "test:unit": "node --no-warnings --test \"test/unit/*.test.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "check": "npm run typecheck && npm run test:unit"
+    "check": "npm run typecheck && npm run test:unit",
+    "prepublishOnly": "npm run check && npm run build && node ./scripts/check-package.mjs"
   },
   "files": [
-    "src",
+    "dist",
+    "!dist/**/*.map",
+    "native/macos/bin/dtfd-macos",
     "native/macos/Sources",
     "native/macos/build.sh",
-    "native/windows",
-    "scripts",
+    "native/windows/bin/dtfd-windows.exe",
+    "native/windows/*.cs",
+    "native/windows/*.csproj",
+    "native/windows/*.ps1",
+    "native/windows/app.manifest",
+    "scripts/postinstall.mjs",
     "docs",
     "README.md",
     "CHANGELOG.md"
@@ -54,5 +66,14 @@
   "os": [
     "darwin",
     "win32"
-  ]
+  ],
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhruvdabhi101/dtf.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
 }

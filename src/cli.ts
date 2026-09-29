@@ -14,6 +14,7 @@ import { RecordingSession } from './recorder/session.ts';
 import { describeStep } from './recorder/steps.ts';
 import { importSpecifierFor } from './recorder/project.ts';
 import type { ReporterName } from './runner/reporter.ts';
+import { installChrome } from './browsers/managed.ts';
 
 const PKG = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')) as { version: string };
 
@@ -25,6 +26,8 @@ Usage
   dtf record [file]          Record a test from the terminal (Ctrl+C to finish)
   dtf list                   List the tests the suite declares, without running them
   dtf doctor                 Check that this machine can drive the OS
+  dtf install-browser        Download Chrome for Testing for browser sign-in steps
+                             (launchIsolated uses it from then on; --force re-downloads)
   dtf init                   Write a starter dtf.config.ts and example spec
   dtf inspect tray           List every tray icon on the system
   dtf inspect tree           Dump an app's accessibility tree
@@ -118,7 +121,7 @@ async function doctor(flags: Flags): Promise<number> {
   return doctorPassed(checks) ? 0 : 1;
 }
 
-const STARTER_CONFIG = `import { defineConfig } from 'dtf';
+const STARTER_CONFIG = `import { defineConfig } from '@dhruvdabhi101/dtf';
 
 export default defineConfig({
   app: {
@@ -138,7 +141,7 @@ export default defineConfig({
 });
 `;
 
-const STARTER_SPEC = `import { describe, test } from 'dtf';
+const STARTER_SPEC = `import { describe, test } from '@dhruvdabhi101/dtf';
 
 describe('OS surfaces', () => {
   test('registers a tray icon', async ({ app }) => {
@@ -325,6 +328,13 @@ async function main(): Promise<number> {
 
     case 'init':
       return init();
+
+    case 'install-browser': {
+      const info = await installChrome({ force: !!flags.force, log: (m) => console.log(m) });
+      console.log(`
+browser sign-in steps (launchIsolated) now use Chrome for Testing ${info.version}.`);
+      return 0;
+    }
 
     case 'inspect':
       return inspect(positional[1] ?? 'tree', flags);

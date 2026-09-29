@@ -51,7 +51,7 @@ kept in its own folder so the app's own `package.json` and lockfile stay untouch
 
 ```
 <app-repo>/dtf/
-  package.json          { "type": "module", "devDependencies": { "dtf": "file:../../DesktopTestingFramework" } }
+  package.json          { "type": "module", "devDependencies": { "@dhruvdabhi101/dtf": "file:../../DesktopTestingFramework" } }
   tsconfig.json         editor type-checking only (nodenext, allowImportingTsExtensions, noEmit)
   lib/<app>.ts          shared helpers for this app: status strings, menu readers, gates
   <suite>/dtf.config.ts one folder per *app state/profile* (see §3)
@@ -68,11 +68,11 @@ kept in its own folder so the app's own `package.json` and lockfile stay untouch
     "doctor": "dtf doctor",
     "test": "dtf run first-run && dtf run signed-in"
   },
-  "devDependencies": { "dtf": "file:../../DesktopTestingFramework", "@types/node": "^24", "typescript": "5.9" }
+  "devDependencies": { "@dhruvdabhi101/dtf": "file:../../DesktopTestingFramework", "@types/node": "^24", "typescript": "5.9" }
 }
 ```
 
-Then `cd dtf && npm install && npx dtf doctor`. Specs import from `'dtf'`.
+Then `cd dtf && npm install && npx dtf doctor`. Specs import from `'@dhruvdabhi101/dtf'`.
 
 `npm install` symlinks the framework, and Node resolves the symlink to its real path.
 That matters: Node refuses to strip types from `.ts` files under `node_modules`.
@@ -84,7 +84,7 @@ compile the specs.
 ### Config — `dtf.config.ts`
 
 ```ts
-import { defineConfig } from 'dtf';
+import { defineConfig } from '@dhruvdabhi101/dtf';
 
 export default defineConfig({
   app: {
@@ -145,12 +145,12 @@ Inside a folder:
 
 ## 4. API reference
 
-Everything is exported from `'dtf'`.
+Everything is exported from `'@dhruvdabhi101/dtf'`.
 
 ### 4.1 Test registration
 
 ```ts
-import { describe, test, it, beforeAll, afterAll, beforeEach, afterEach } from 'dtf';
+import { describe, test, it, beforeAll, afterAll, beforeEach, afterEach } from '@dhruvdabhi101/dtf';
 
 describe('Tray', () => {
   beforeAll(async ({ app }) => { await app.tray.shouldExist({}, { timeoutMs: 30_000 }); });
@@ -352,7 +352,7 @@ AppleScript. That needs the **Automation** permission for the test process
 ### 4.11 Utilities
 
 ```ts
-import { waitFor, sleep, AssertionError, TimeoutError, UnsupportedError, aiAssert } from 'dtf';
+import { waitFor, sleep, AssertionError, TimeoutError, UnsupportedError, aiAssert } from '@dhruvdabhi101/dtf';
 const v = await waitFor(async () => (await read()) || undefined, { timeoutMs, intervalMs, description });
 throw new AssertionError('message', expected, actual);
 await aiAssert(app, 'the onboarding window text is readable in dark mode', { vision: true }); // needs ANTHROPIC_API_KEY

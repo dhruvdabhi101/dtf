@@ -237,7 +237,7 @@ function testBlock(steps: Step[], testName: string, indent: string): string {
 
 /** A complete, self-contained spec file. */
 export function generateSpec(steps: Step[], opts: SpecOptions): string {
-  const from = opts.importFrom ?? 'dtf';
+  const from = opts.importFrom ?? '@dhruvdabhi101/dtf';
   const header = opts.header ? `${opts.header.split('\n').map((l) => `// ${l}`).join('\n')}\n` : '';
   if (opts.describeName) {
     return `${header}import { describe, test } from ${lit(from)};\n\n` +
@@ -253,7 +253,7 @@ export function generateSpec(steps: Step[], opts: SpecOptions): string {
  * or rewrite anything already there. `test` is added to the framework import
  * when the file does not import it yet.
  */
-export function appendToSpec(source: string, steps: Step[], testName: string, importFrom = 'dtf'): string {
+export function appendToSpec(source: string, steps: Step[], testName: string, importFrom = '@dhruvdabhi101/dtf'): string {
   const block = testBlock(steps, testName, '');
   const importsTest = /import\s*\{[^}]*\btest\b[^}]*\}\s*from\s*['"][^'"]+['"]/.test(source);
   let out = source;

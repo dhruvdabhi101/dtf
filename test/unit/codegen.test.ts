@@ -90,9 +90,9 @@ test('generated specs are valid TypeScript that Node can load', async () => {
       step({ kind: 'trayMenu', path: [`It's "quoted"`] }),
       step({ kind: 'fill', target: target(`button[title="a, b"]`, 'x', `Win's`), text: 'line\nbreak' }),
       step({ kind: 'comment', text: 'a note' }),
-    ], { testName: `it's a test`, describeName: 'Suite', importFrom: 'dtf' })
+    ], { testName: `it's a test`, describeName: 'Suite', importFrom: '@dhruvdabhi101/dtf' })
       // Swap the import for a stub so the file can be executed on its own.
-      .replace(`from 'dtf'`, `from './stub.ts'`);
+      .replace(`from '@dhruvdabhi101/dtf'`, `from './stub.ts'`);
     await writeFile(join(dir, 'stub.ts'), 'export const describe = (_n: string, f: () => void) => f();\nexport const test = (_n: string, _f: unknown) => {};\n');
     await writeFile(join(dir, 'gen.spec.ts'), src);
     await run(process.execPath, ['--no-warnings', join(dir, 'gen.spec.ts')]);
@@ -102,11 +102,11 @@ test('generated specs are valid TypeScript that Node can load', async () => {
 });
 
 test('appendToSpec adds a test at the end and imports test when missing', () => {
-  const src = `import { describe } from 'dtf';\n\ndescribe('x', () => {});\n`;
+  const src = `import { describe } from '@dhruvdabhi101/dtf';\n\ndescribe('x', () => {});\n`;
   const out = appendToSpec(src, [step({ kind: 'press', combo: 'enter' })], 'new one');
-  assert.match(out, /^import \{ describe, test \} from 'dtf';/);
+  assert.match(out, /^import \{ describe, test \} from '@dhruvdabhi101\/dtf';/);
   assert.match(out, /test\('new one', async \(\{ app \}\) => \{\n  await app\.key\('enter'\);\n\}\);\n$/);
 
-  const already = `import { test } from 'dtf';\n`;
+  const already = `import { test } from '@dhruvdabhi101/dtf';\n`;
   assert.equal(appendToSpec(already, [], 'e').match(/import/g)?.length, 1);
 });

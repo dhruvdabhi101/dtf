@@ -17,7 +17,7 @@ import { LiveManager } from './live.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const UI_DIR = join(HERE, 'ui');
-const CLI = join(HERE, '..', 'cli.ts');
+const CLI = join(HERE, '..', import.meta.url.endsWith('.ts') ? 'cli.ts' : 'cli.js');
 const PKG_VERSION = (JSON.parse(await readFile(join(HERE, '..', '..', 'package.json'), 'utf8')) as { version: string }).version;
 
 export type StudioOptions = {

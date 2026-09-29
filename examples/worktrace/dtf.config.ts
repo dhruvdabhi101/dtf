@@ -4,7 +4,7 @@ import { defineConfig } from '../../src/index.ts';
  * dtf config for Worktrace (com.worktrace.app).
  *
  * To move this suite into the Worktrace repo, copy this directory to
- * `~/work/screenpipe/dtf/` and change the import above to `'dtf'`. Paths below
+ * `~/work/screenpipe/dtf/` and change the import above to `'@dhruvdabhi101/dtf'`. Paths below
  * resolve relative to this file, so nothing else needs editing.
  */
 export default defineConfig({
