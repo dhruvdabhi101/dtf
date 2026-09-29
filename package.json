@@ -1,6 +1,6 @@
 {
   "name": "@dhruvdabhi101/dtf",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OS-level end-to-end testing for desktop apps: tray, notifications, native dialogs, permissions, menus and windows, with a recorder and a Studio UI.",
   "type": "module",
   "bin": {
