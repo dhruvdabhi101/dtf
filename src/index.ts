@@ -33,6 +33,10 @@ export { StepBuilder, describeStep, type Step, type StepInput, type Target, type
 export { generateSpec, generateBody, appendToSpec } from './recorder/codegen.ts';
 export { selectorCandidates } from './recorder/selectors.ts';
 
+export {
+  PostHogServer, type PostHogServerOptions, type CapturedEvent, type CapturedRequest, type EventQuery, type FlagValue,
+} from './fakes/posthog.ts';
+
 export { aiAssert, aiCheck, type AIOptions, type AIResult } from './ai/agent.ts';
 
 export { MacOSDriver } from './drivers/macos.ts';

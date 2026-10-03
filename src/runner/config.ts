@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { LaunchOptions } from '../types.ts';
 import type { ReporterName } from './reporter.ts';
+import type { FlagValue } from '../fakes/posthog.ts';
 
 /**
  * An app path, either one string or one per platform. The per-platform form is
@@ -60,12 +61,20 @@ export type DTFConfig = {
   attach?: { pid?: number; bundleId?: string; name?: string };
   /** One reporter or several: `['pretty', 'junit']`. */
   reporter?: ReporterName | ReporterName[];
+  /**
+   * Run a PostHog stand-in for the whole run and hand it to tests as
+   * `ctx.posthog`. The app must already send its analytics to
+   * `http://127.0.0.1:<port>`, usually through a test build with that host
+   * baked in. Every event is also written to `posthog-events.jsonl` in the
+   * artifacts directory.
+   */
+  posthog?: { port: number; host?: string; flags?: Record<string, FlagValue> };
 };
 
 /** The config after loading: the app path is resolved for this platform. */
 export type ResolvedConfig = Omit<DTFConfig, 'app'> & { app?: LaunchOptions; configFile?: string };
 
-export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'grantPermissions' | 'denyPermissions' | 'attach' | 'slowMoMs' | 'beforeLaunch'>> = {
+export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'grantPermissions' | 'denyPermissions' | 'attach' | 'slowMoMs' | 'beforeLaunch' | 'posthog'>> = {
   lifecycle: 'per-file',
   testMatch: ['**/*.spec.ts', '**/*.test.ts'],
   artifactsDir: 'dtf-artifacts',

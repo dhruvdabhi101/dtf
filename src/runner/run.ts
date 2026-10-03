@@ -8,6 +8,7 @@ import { createDriver } from '../drivers/index.ts';
 import { DesktopApp, appIdentity } from '../app.ts';
 import { sleep } from '../core/wait.ts';
 import { UnsupportedError } from '../core/errors.ts';
+import { PostHogServer } from '../fakes/posthog.ts';
 import {
   rootSuite, resetRegistry, setCurrentFile, hasOnly,
   type SuiteNode, type TestCase, type TestContext,
@@ -156,6 +157,19 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
     platform: driver.platformName, at: startedAt,
   });
 
+  let posthog: PostHogServer | undefined;
+  if (cfg.posthog) {
+    try {
+      posthog = await PostHogServer.start({ ...cfg.posthog, logFile: join(artifactsDir, 'posthog-events.jsonl') });
+    } catch (err) {
+      await driver.stop();
+      throw err;
+    }
+  }
+  const posthogCtx = posthog ?? notConfigured<PostHogServer>(
+    'ctx.posthog is only available with `posthog: { port }` in dtf.config.ts',
+  );
+
   let app: DesktopApp | null = null;
 
   /** Launches the app under test, honouring any permission resets. */
@@ -239,7 +253,13 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
             return path;
           },
           attach: (name, body) => attachments.push({ name, body }),
+          posthog: posthogCtx,
         };
+        // A test that quits and relaunches the app holds its own instance; on
+        // failure that one, not the runner's, is the one worth looking at.
+        const relaunched: DesktopApp[] = [];
+        const offLaunch = DesktopApp.onLaunch((a) => relaunched.push(a));
+        const eventsSince = posthog?.cursor() ?? 0;
 
         if (cfg.cleanSlate && app) {
           // A menu left open by a previous test blocks the next interaction,
@@ -288,6 +308,9 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
           }
         }
 
+        offLaunch();
+        const latest = relaunched.at(-1);
+
         const result: TestResult = {
           name: test.fullName,
           file,
@@ -303,7 +326,10 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
           // Otherwise this reads as an empty tray or a missing window.
           const how = exit.signal ? `signal ${exit.signal}` : `code ${exit.code}`;
           const when = exit.at < t0 ? 'before this test started' : `${Math.round((exit.at - t0) / 1000)}s into this test`;
-          result.error.message += `\n(the app under test is not running: it exited with ${how} ${when}; see the app log)`;
+          result.error.message += latest
+            ? `\n(the app dtf launched for this file exited with ${how} ${when}; the test launched ` +
+              `${relaunched.length === 1 ? 'an instance' : `${relaunched.length} instances`} of its own, and the artifacts are from the latest)`
+            : `\n(the app under test is not running: it exited with ${how} ${when}; see the app log)`;
         }
 
         if (status === 'failed' && cfg.screenshotOnFailure) {
@@ -311,19 +337,34 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
           // screenshot and the tree you cannot tell "wrong state" from "wrong selector".
           const stem = `${Date.now()}-FAIL-${safeName(test.name)}`;
           result.screenshot = await ctx.screenshot(`FAIL-${test.name}`).catch(() => undefined);
-          if (app) {
-            const tree = await app.tree(10).catch(() => undefined);
+          const subject = latest ?? app;
+          if (subject) {
+            const tree = await subject.tree(10).catch(() => undefined);
             if (tree) {
               const path = join(artifactsDir, `${stem}-tree.json`);
               await writeFile(path, JSON.stringify(tree, null, 2));
               result.treeDump = path;
             }
-            if (app.logs.length) {
+            if (subject.logs.length) {
               const path = join(artifactsDir, `${stem}-app.log`);
-              await writeFile(path, app.logText());
+              await writeFile(path, subject.logText());
               result.appLog = path;
             }
           }
+          if (latest && app?.logs.length) {
+            const path = join(artifactsDir, `${stem}-first-instance-app.log`);
+            await writeFile(path, app.logText());
+            attachments.push({ name: 'log of the instance dtf launched', body: path });
+          }
+        }
+        if (status === 'failed' && posthog) {
+          const events = posthog.events.slice(eventsSince);
+          attachments.push({
+            name: 'analytics events during this test',
+            body: events.length
+              ? events.slice(-50).map((e) => `${new Date(e.receivedAt).toISOString()}  ${e.event}`).join('\n')
+              : 'none',
+          });
         }
 
         results.push(result);
@@ -338,7 +379,7 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
 
       for (const suite of [...ranSuites].reverse()) {
         for (const hook of suite.afterAll) {
-          await Promise.resolve(hook({ app: app as DesktopApp, driver, screenshot: async () => '', attach: () => {} })).catch(() => {});
+          await Promise.resolve(hook({ app: app as DesktopApp, driver, screenshot: async () => '', attach: () => {}, posthog: posthogCtx })).catch(() => {});
         }
       }
 
@@ -349,6 +390,7 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
     }
   } finally {
     if (app) await (app as DesktopApp).close().catch(() => {});
+    await posthog?.close();
     await driver.stop();
   }
 
@@ -366,6 +408,17 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
 }
 
 export type { Driver };
+
+/** A stand-in that explains itself on first use, for context fields a config did not enable. */
+function notConfigured<T extends object>(message: string): T {
+  return new Proxy({} as T, {
+    get(_, prop) {
+      // Let awaiting or logging the context itself work.
+      if (prop === 'then' || typeof prop === 'symbol') return undefined;
+      throw new Error(message);
+    },
+  });
+}
 
 /** Driver calls that act on the UI, and so get the `slowMoMs` pause after them. */
 const INPUT_OPS = new Set<string>([

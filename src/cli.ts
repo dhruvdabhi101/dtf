@@ -15,6 +15,7 @@ import { describeStep } from './recorder/steps.ts';
 import { importSpecifierFor } from './recorder/project.ts';
 import type { ReporterName } from './runner/reporter.ts';
 import { installChrome } from './browsers/managed.ts';
+import { PostHogServer } from './fakes/posthog.ts';
 
 const PKG = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')) as { version: string };
 
@@ -39,6 +40,9 @@ Usage
                              status | grant | deny | reset an app's privacy grants,
                              before launch (e.g. on CI). --bundle <id> or --app <path>;
                              defaults to the configured app
+  dtf posthog                Run a PostHog stand-in and print the analytics events
+                             it receives (--port, default 8710; --out <file.jsonl>;
+                             --flags '{"beta":true}' for feature flags)
 
 Run options
   --grep <text>       Only run tests whose name contains <text>
@@ -341,6 +345,22 @@ browser sign-in steps (launchIsolated) now use Chrome for Testing ${info.version
 
     case 'permissions':
       return permissions(positional[1], positional.slice(2), flags);
+
+    case 'posthog': {
+      const server = await PostHogServer.start({
+        port: flags.port ? Number(flags.port) : 8710,
+        host: str(flags.host),
+        logFile: str(flags.out),
+        flags: str(flags.flags) ? JSON.parse(str(flags.flags)!) : undefined,
+      });
+      console.log(`PostHog stand-in listening on ${server.url}${flags.out ? `, writing ${str(flags.out)}` : ''} (Ctrl+C to stop)\n`);
+      server.onEvent((e) => {
+        const time = new Date(e.receivedAt).toISOString().slice(11, 19);
+        console.log(`${time}  ${e.event.padEnd(32)} ${e.distinctId ?? ''}  \x1b[2m${e.path}\x1b[0m`);
+      });
+      process.once('SIGINT', () => { void server.close().then(() => process.exit(0)); });
+      return new Promise<number>(() => {});
+    }
 
     case 'list': {
       const files = await collectTests({ dir: positional[1] });

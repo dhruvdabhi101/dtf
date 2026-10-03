@@ -615,11 +615,52 @@ static class Tray
     static Dictionary<string, object?> Content(string kind, IUIAutomationElement root, int depth)
         => new() { ["kind"] = kind, ["root"] = new Serializer(new SerializeOptions { MaxDepth = depth }).Node(new ElementNode(root)) };
 
-    /// <summary>Opens the Windows 11 overflow flyout and returns the item as it appears there.</summary>
+    /// <summary>
+    /// Opens the Windows 11 overflow flyout and returns the item as it appears there.
+    ///
+    /// Retried, because each of these has been seen to defeat a single attempt,
+    /// most often on an app relaunched mid-test: the icon is mid-move onto the
+    /// taskbar after a promotion, the flyout is already open (and pressing the
+    /// chevron again would close it), or Explorer has not finished laying out
+    /// an icon that was registered a moment ago.
+    /// </summary>
     static TrayItem? RevealHidden(TrayItem item)
     {
-        var taskbar = FindWindowW("Shell_TrayWnd", null);
-        var el = Uia.FromHandle(taskbar);
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            if (attempt > 0) Thread.Sleep(600);
+
+            // Already visible: promoted onto the taskbar, or in a flyout that is open.
+            var shown = Shown(item);
+            if (shown != null) return shown;
+
+            if (!OverflowOpen())
+            {
+                var chevron = Chevron();
+                if (chevron == null) return null;
+                Elements.Perform(chevron, "AXPress");
+            }
+            var found = Ops.WaitFor(2500, () => Shown(item), 150);
+            if (found != null) return found;
+
+            // Not in the flyout: close it, so the next attempt starts from a known state.
+            if (OverflowOpen() && Chevron() is { } toggle) Elements.Perform(toggle, "AXPress");
+        }
+        return null;
+    }
+
+    /// <summary>The icon as it is on screen right now (taskbar or open flyout), if it is.</summary>
+    static TrayItem? Shown(TrayItem item)
+    {
+        var found = Enumerate().FirstOrDefault(i => !i.Hidden && i.Element != null && i.Rect != null && SameIcon(i, item.Label, item.ExePath));
+        if (found != null && found.Pid == 0) { found.Pid = item.Pid; found.App = item.App; found.BundleId = item.BundleId; }
+        return found;
+    }
+
+    /// <summary>The taskbar's "Show hidden icons" button.</summary>
+    static IUIAutomationElement? Chevron()
+    {
+        var el = Uia.FromHandle(FindWindowW("Shell_TrayWnd", null));
         if (el == null) return null;
         Node? chevron = null;
         Walk.Run(new ElementNode(el), 6, 500, (n, _) =>
@@ -627,12 +668,11 @@ static class Tray
             if (n.Props.ControlType == CT.Button && n.Props.Identifier == "SystemTrayIcon" && Uia.Ci(n.Props.Title, "hidden icons")) { chevron = n; return Step.Stop; }
             return Step.Continue;
         });
-        if (chevron?.Element == null) return null;
-        Elements.Perform(chevron.Element, "AXPress");
-        var found = Ops.WaitFor(2500, () => Enumerate().FirstOrDefault(i => !i.Hidden && i.Rect != null && SameIcon(i, item.Label, item.ExePath)), 150);
-        if (found != null && found.Pid == 0) { found.Pid = item.Pid; found.App = item.App; found.BundleId = item.BundleId; }
-        return found;
+        return chevron?.Element;
     }
+
+    static bool OverflowOpen() =>
+        TopLevelWindows().Any(h => ClassName(h) == "TopLevelWindowForOverflowXamlIsland" && IsWindowVisible(h));
 
     /// <summary>Whether `i` is the icon known by `label` / `exe`: same label, same exe, or a label named after it.</summary>
     static bool SameIcon(TrayItem i, string label, string? exe) =>

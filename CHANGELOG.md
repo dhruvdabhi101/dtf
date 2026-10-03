@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+### Added
+- **PostHog stand-in** (`PostHogServer`, the `posthog` config option and
+  `ctx.posthog`, and `dtf posthog`): a local PostHog ingestion API that tests
+  can assert against. Reads posthog-node and posthog-js payloads (gzip, base64,
+  plain), answers feature flags, logs events to `posthog-events.jsonl`, and
+  lists the events a failing test saw.
+- `DesktopApp.onLaunch()`: notified of every launched app.
+
+### Fixed
+- Windows: revealing a tray icon from the hidden overflow gave up after one
+  try, and pressing the chevron while the flyout was already open closed it.
+  An app relaunched mid-test often has its icon there, so its first tray read
+  failed. It now retries, and leaves an open flyout open.
+- A test that relaunches the app itself now gets failure artifacts (log, tree)
+  from that instance, not from the one the runner launched, and the failure
+  no longer says "the app under test is not running" when the test quit it on
+  purpose.
+
+## 0.2.1
 
 ### Added
 - `dtf permissions status|grant|deny|reset <service…>`: change an app's privacy

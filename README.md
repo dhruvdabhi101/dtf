@@ -376,6 +376,38 @@ of the same app installed has several claimants on the scheme, and LaunchService
 will happily deliver the callback to the wrong one. Full treatment in
 [docs/CI.md](docs/CI.md#4-authentication).
 
+## Analytics (PostHog)
+
+`dtf` ships a stand-in for PostHog's ingestion API. Point a test build's
+PostHog host at it and the app's analytics land in the test instead of a real
+project: CI stops polluting production numbers, and events become assertions.
+
+```ts
+// dtf.config.ts: runs for the whole run, as ctx.posthog
+export default defineConfig({ posthog: { port: 8710, flags: { 'new-onboarding': true } } });
+```
+
+```ts
+test('pausing is tracked', async ({ app, posthog }) => {
+  const since = posthog.cursor();
+  await app.tray.click('Pause for 1 hour');
+  await posthog.waitForEvent({ event: 'recording_paused', properties: { minutes: 60 } }, { since });
+});
+```
+
+It reads what the official SDKs send: posthog-node's gzipped `/batch/`,
+posthog-js's `/e/` and `/i/v0/e/` (plain, gzip or base64), and `/capture/`. It
+answers `/flags` and `/decide` with the configured flags, and anything else
+with a 200, so the SDK never logs an error. SDKs flush on a timer (posthog-node
+every 10 s), so give `waitForEvent` room, and pass `withinMs` to
+`shouldNotHaveEvent` for a negative check that means something. Every event goes
+to `posthog-events.jsonl` in the artifacts, and a failing test lists the events
+it saw.
+
+`dtf posthog --port 8710` runs the same server on its own and prints events as
+they arrive, for trying a build by hand. `PostHogServer.start()` is the
+programmatic form.
+
 ## CI
 
 These are real GUI tests: they need a logged-in graphical session, not a headless

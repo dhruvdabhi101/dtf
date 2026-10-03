@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import type { DesktopApp } from '../app.ts';
 import type { Driver } from '../drivers/driver.ts';
+import type { PostHogServer } from '../fakes/posthog.ts';
 
 export type TestContext = {
   app: DesktopApp;
@@ -9,6 +10,8 @@ export type TestContext = {
   screenshot: (name: string) => Promise<string>;
   /** Attaches arbitrary text to the report for this test. */
   attach: (name: string, body: string) => void;
+  /** The PostHog stand-in. Throws on use unless `posthog` is set in the config. */
+  posthog: PostHogServer;
 };
 
 export type TestFn = (ctx: TestContext) => Promise<void> | void;

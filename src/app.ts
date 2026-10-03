@@ -77,6 +77,8 @@ export async function appIdentity(appPath: string): Promise<string> {
  * things that matter for testing: a real child pid, control over the
  * environment, and the app's stdout/stderr captured as test artifacts.
  */
+const launchListeners = new Set<(app: DesktopApp) => void>();
+
 export class DesktopApp {
   #driver: Driver;
   #proc: ChildProcess | null = null;
@@ -164,6 +166,16 @@ export class DesktopApp {
 
   // ── Launching / attaching ────────────────────────────────────────────────
 
+  /**
+   * Called with every app `launch()` starts, whoever starts it. The runner
+   * uses this to notice a test that relaunched the app itself, so failure
+   * artifacts come from the instance that was actually running.
+   */
+  static onLaunch(fn: (app: DesktopApp) => void): () => void {
+    launchListeners.add(fn);
+    return () => launchListeners.delete(fn);
+  }
+
   static async launch(driver: Driver, opts: LaunchOptions): Promise<DesktopApp> {
     const appPath = resolvePath(opts.path);
     if (!existsSync(appPath)) throw new Error(`app not found at ${appPath}`);
@@ -243,6 +255,7 @@ export class DesktopApp {
     if (opts.chromiumAccessibility !== false) {
       await driver.setElectronAccessibility(proc.pid).catch(() => {});
     }
+    for (const fn of launchListeners) fn(app);
     return app;
   }
 
