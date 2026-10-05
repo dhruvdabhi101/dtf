@@ -1,5 +1,6 @@
 import type { Driver, PreflightCheck } from './drivers/driver.ts';
 import { createDriver, isPlatformSupported } from './drivers/index.ts';
+import { chaosPreflight } from './chaos/preflight.ts';
 
 export type { PreflightCheck };
 
@@ -70,6 +71,7 @@ export async function runDoctor(existing?: Driver): Promise<PreflightCheck[]> {
   } finally {
     if (!existing) await driver.stop().catch(() => {});
   }
+  checks.push(...(await chaosPreflight().catch((err) => [{ name: 'chaos', ok: 'warn' as const, detail: String(err) }])));
   return checks;
 }
 

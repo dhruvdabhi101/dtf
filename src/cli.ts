@@ -16,6 +16,7 @@ import { importSpecifierFor } from './recorder/project.ts';
 import type { ReporterName } from './runner/reporter.ts';
 import { installChrome } from './browsers/managed.ts';
 import { PostHogServer } from './fakes/posthog.ts';
+import { listEntries, restoreStale } from './chaos/journal.ts';
 
 const PKG = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')) as { version: string };
 
@@ -35,6 +36,10 @@ Usage
   dtf inspect notifications  Show notification banners currently on screen
   dtf inspect dialogs        Show open dialogs, sheets and file panels
   dtf inspect menu           Dump an app's menu bar
+  dtf chaos status           List faults recorded in the restore journal
+  dtf chaos restore          Undo faults a crashed run left behind (--all: every entry,
+                             even one whose run is still alive)
+  dtf perf report <dir>      Rebuild report.html from a perf recording's data.json
   dtf ask "<claim>"          Ask the AI checker to verify a claim about an app
   dtf permissions <action> <service...>
                              status | grant | deny | reset an app's privacy grants,
@@ -54,6 +59,9 @@ Run options
   --json              Shorthand for --reporter pretty,json
   --attach-pid <pid>  Attach to a running app instead of launching one
   --attach-bundle <id>
+  --allow-destructive Let chaos tests run machine-wide faults (Wi-Fi, adapters,
+                      OS-level shaping, memory and disk exhaustion)
+  --seed <n>          Seed for chaos randomness, to replay a run exactly
 
 Studio options
   --port <n>          Port to listen on (default 4417)
@@ -362,6 +370,43 @@ browser sign-in steps (launchIsolated) now use Chrome for Testing ${info.version
       return new Promise<number>(() => {});
     }
 
+    case 'chaos': {
+      const sub = positional[1] ?? 'status';
+      if (sub === 'status') {
+        const entries = listEntries();
+        if (!entries.length) console.log('no faults recorded');
+        for (const e of entries) {
+          console.log(`  ${e.id}  ${e.description}  (run pid ${e.ownerPid}, since ${new Date(e.createdAt).toLocaleTimeString()}, deadline ${new Date(e.deadline).toLocaleTimeString()})`);
+        }
+        return 0;
+      }
+      if (sub === 'restore') {
+        const done = await restoreStale({ all: flags.all === true });
+        if (!done.length) console.log('nothing to restore');
+        for (const { entry, errors } of done) {
+          console.log(`  ${errors.length ? '[31m✗[0m' : '[32m✓[0m'} ${entry.description}${errors.length ? `: ${errors.join('; ')}` : ''}`);
+        }
+        return done.some((d) => d.errors.length) ? 1 : 0;
+      }
+      console.error('usage: dtf chaos <status|restore> [--all]');
+      return 2;
+    }
+
+    case 'perf': {
+      if (positional[1] !== 'report' || !positional[2]) { console.error('usage: dtf perf report <recording dir | data.json>'); return 2; }
+      const { renderHtml } = await import('./perf/html.ts');
+      const { PerfReport } = await import('./perf/report.ts');
+      const src = resolve(positional[2]);
+      const dataFile = src.endsWith('.json') ? src : join(src, 'data.json');
+      const report = new PerfReport(JSON.parse(await readFile(dataFile, 'utf8')));
+      const out = join(dirname(dataFile), 'report.html');
+      await writeFile(out, renderHtml(report.data, report.summary));
+      console.log(report.table());
+      console.log(`
+wrote ${out}`);
+      return 0;
+    }
+
     case 'list': {
       const files = await collectTests({ dir: positional[1] });
       if (flags.json) console.log(JSON.stringify(files, null, 2));
@@ -408,6 +453,8 @@ browser sign-in steps (launchIsolated) now use Chrome for Testing ${info.version
 
     case 'run':
     case undefined: {
+      if (flags['allow-destructive']) process.env.DTF_CHAOS_DESTRUCTIVE = '1';
+      if (flags.seed) process.env.DTF_CHAOS_SEED = String(flags.seed);
       const reporter = (str(flags.reporter) ?? (flags.json ? 'pretty,json' : undefined))
         ?.split(',').map((r) => r.trim()) as ReporterName[] | undefined;
       const controller = new AbortController();

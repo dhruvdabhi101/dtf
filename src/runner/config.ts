@@ -5,6 +5,8 @@ import { homedir } from 'node:os';
 import type { LaunchOptions } from '../types.ts';
 import type { ReporterName } from './reporter.ts';
 import type { FlagValue } from '../fakes/posthog.ts';
+import type { PerfConfig } from '../perf/index.ts';
+import type { ChaosConfig } from '../chaos/index.ts';
 
 /**
  * An app path, either one string or one per platform. The per-platform form is
@@ -69,12 +71,23 @@ export type DTFConfig = {
    * artifacts directory.
    */
   posthog?: { port: number; host?: string; flags?: Record<string, FlagValue> };
+  /**
+   * Launch the app through dtf's local network proxy. Tests then see the
+   * app's traffic per host (`ctx.perf`) and can break its network without
+   * admin rights (`ctx.chaos.network`). Chromium traffic follows
+   * `--proxy-server`; Node, Rust and Go sidecars follow HTTPS_PROXY.
+   */
+  networkProxy?: boolean | { port?: number };
+  /** Defaults for `ctx.perf`: sampling interval, warm-up, budgets. */
+  perf?: PerfConfig;
+  /** Limits for `ctx.chaos`: whether machine-wide faults may run, the watchdog deadline, tool paths. */
+  chaos?: ChaosConfig;
 };
 
 /** The config after loading: the app path is resolved for this platform. */
 export type ResolvedConfig = Omit<DTFConfig, 'app'> & { app?: LaunchOptions; configFile?: string };
 
-export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'grantPermissions' | 'denyPermissions' | 'attach' | 'slowMoMs' | 'beforeLaunch' | 'posthog'>> = {
+export const DEFAULTS: Required<Omit<DTFConfig, 'app' | 'resetPermissions' | 'grantPermissions' | 'denyPermissions' | 'attach' | 'slowMoMs' | 'beforeLaunch' | 'posthog' | 'networkProxy' | 'perf' | 'chaos'>> = {
   lifecycle: 'per-file',
   testMatch: ['**/*.spec.ts', '**/*.test.ts'],
   artifactsDir: 'dtf-artifacts',

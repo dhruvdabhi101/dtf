@@ -2,6 +2,9 @@ import { pathToFileURL } from 'node:url';
 import type { DesktopApp } from '../app.ts';
 import type { Driver } from '../drivers/driver.ts';
 import type { PostHogServer } from '../fakes/posthog.ts';
+import type { Perf } from '../perf/index.ts';
+import type { Chaos } from '../chaos/index.ts';
+import type { NetworkProxy } from '../net/proxy.ts';
 
 export type TestContext = {
   app: DesktopApp;
@@ -12,6 +15,12 @@ export type TestContext = {
   attach: (name: string, body: string) => void;
   /** The PostHog stand-in. Throws on use unless `posthog` is set in the config. */
   posthog: PostHogServer;
+  /** CPU, memory, I/O and network measurement for this test. */
+  perf: Perf;
+  /** Fault injection for this test. Every fault is restored when the test ends. */
+  chaos: Chaos;
+  /** The run's network proxy, when `networkProxy` is on in the config. */
+  proxy: NetworkProxy | null;
 };
 
 export type TestFn = (ctx: TestContext) => Promise<void> | void;

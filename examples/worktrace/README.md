@@ -98,3 +98,30 @@ The shipped `2.0.0-alpha.5` build renders different menu labels than
 `"Turn off AI discovery"` where the source has
 `"Turn off AI Workflow Discovery"`. These tests pin what users actually get.
 Point `app.path` at `dist/mac-arm64/Worktrace.app` to test a local build instead.
+
+## Performance and chaos suites
+
+Two more suites live in subdirectories, so the default run above never
+includes them:
+
+```bash
+node src/cli.ts run examples/worktrace/perf     # ~25 min: recording cost while a scripted user browses
+node src/cli.ts run examples/worktrace/chaos    # ~35 min: crashes, hangs, network and resource faults
+```
+
+- Both launch Worktrace through dtf's network proxy (`networkProxy: true`) and
+  clear its stale instance lock before every launch, since chaos tests kill it.
+- The chaos suite relaunches Worktrace for every test (`lifecycle: 'per-test'`).
+- Destructive tests (real Wi-Fi drop, 95% memory, disk full under
+  `~/.screenpipe`, or `DTF_WORKTRACE_DATA`) need `--allow-destructive`. Admin
+  tests (firewall, OS-level shaping) need `DTF_CHAOS_ADMIN=1` in an elevated
+  terminal. The long soaks need `DTF_SOAK=1`.
+- `DTF_PERF_MINUTES` shortens the browsing phase of the perf suite.
+- The perf suite writes a baseline per platform to `perf/baselines/` on its
+  first run and fails later runs on a >20% regression. The budgets in
+  `perf/dtf.config.ts` are starting points: tune them after the first run.
+- Reports: `dtf-artifacts/perf/<test>/<time>-<name>/report.html`.
+
+Both run against the real signed-in profile. The crash tests really kill
+Worktrace mid-write, so do not run them on a profile whose data you need.
+See [docs/PERF_AND_CHAOS.md](../../docs/PERF_AND_CHAOS.md).

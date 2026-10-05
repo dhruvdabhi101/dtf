@@ -93,6 +93,8 @@ export class DesktopApp {
   #exe: string | null = null;
   #launchArgs: string[] = [];
   #launchEnv: NodeJS.ProcessEnv | undefined;
+  #launchOpts: LaunchOptions | null = null;
+  #beforeRelaunch: (() => void | Promise<void>) | undefined;
 
   readonly tray: TraySurface;
   readonly browser: BrowserSurface;
@@ -122,6 +124,8 @@ export class DesktopApp {
   get bundleId() { return this.#bundleId; }
   get name() { return this.#name; }
   get driver() { return this.#driver; }
+  /** The executable that was launched (inside the bundle on macOS), or null for an attached app. */
+  get executable() { return this.#exe; }
   /** True when this app was attached to rather than launched by the framework. */
   get attached() { return this.#attached; }
 
@@ -176,7 +180,7 @@ export class DesktopApp {
     return () => launchListeners.delete(fn);
   }
 
-  static async launch(driver: Driver, opts: LaunchOptions): Promise<DesktopApp> {
+  static async launch(driver: Driver, opts: LaunchOptions, hooks: { beforeRelaunch?: () => void | Promise<void> } = {}): Promise<DesktopApp> {
     const appPath = resolvePath(opts.path);
     if (!existsSync(appPath)) throw new Error(`app not found at ${appPath}`);
 
@@ -223,6 +227,8 @@ export class DesktopApp {
     app.#exe = exe;
     app.#launchArgs = args;
     app.#launchEnv = opts.env;
+    app.#launchOpts = opts;
+    app.#beforeRelaunch = hooks.beforeRelaunch;
     proc.once('exit', (code, signal) => { app.#exit = { code, signal, at: Date.now() }; });
 
     for (const stream of ['stdout', 'stderr'] as const) {
@@ -356,6 +362,39 @@ export class DesktopApp {
     }
   }
 
+  /**
+   * Starts the app again after it exited or was killed (e.g. by
+   * `chaos.process.kill`), with the same options, and points this object and
+   * all its surfaces at the new process. Closes the old one first if it is
+   * still running. The config's `beforeLaunch` runs first, for lock files a
+   * killed instance leaves behind.
+   *
+   * An isolated user-data dir is kept, not recreated: recovery after a crash
+   * is only meaningful against the data the crashed instance left.
+   */
+  async relaunch(opts: { timeoutMs?: number } = {}): Promise<this> {
+    if (!this.#launchOpts || !this.#exe) throw new Error('relaunch() only works for an app dtf launched, not one it attached to');
+    if (await this.isRunning()) await this.close({ keepUserData: true });
+    await this.#beforeRelaunch?.();
+    // Start the same executable with exactly the old arguments (which already
+    // carry the user-data dir and any shortcut arguments).
+    const next = await DesktopApp.launch(this.#driver, {
+      ...this.#launchOpts,
+      path: this.#exe,
+      args: this.#launchArgs,
+      isolatedUserData: false,
+      timeoutMs: opts.timeoutMs ?? this.#launchOpts.timeoutMs,
+    });
+    this.#proc = next.#proc;
+    this.#pid = next.#pid;
+    this.#exit = null;
+    next.#proc?.once('exit', (code, signal) => { this.#exit = { code, signal, at: Date.now() }; });
+    // Keep one log: what the new process printed while starting, then everything after.
+    this.#logs.push({ stream: 'stderr', line: `[dtf] relaunched as pid ${this.#pid}`, at: Date.now() }, ...next.#logs);
+    next.#logs = this.#logs;
+    return this;
+  }
+
   // ── Teardown ─────────────────────────────────────────────────────────────
 
   /**
@@ -364,7 +403,7 @@ export class DesktopApp {
    * Tray apps routinely ignore a polite terminate — that is often the whole
    * point of them — so the force step is not optional in practice.
    */
-  async close(opts: { timeoutMs?: number; force?: boolean } = {}): Promise<void> {
+  async close(opts: { timeoutMs?: number; force?: boolean; keepUserData?: boolean } = {}): Promise<void> {
     // An app we attached to was running before the test and should outlive it.
     if (this.#attached && !opts.force) return;
     const timeoutMs = opts.timeoutMs ?? 5000;
@@ -380,7 +419,7 @@ export class DesktopApp {
       this.#proc?.kill('SIGKILL');
     }
 
-    if (this.#userDataDir) {
+    if (this.#userDataDir && !opts.keepUserData) {
       await rm(this.#userDataDir, { recursive: true, force: true }).catch(() => {});
       this.#userDataDir = null;
     }

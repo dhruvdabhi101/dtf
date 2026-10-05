@@ -39,6 +39,15 @@ export {
 
 export { aiAssert, aiCheck, type AIOptions, type AIResult } from './ai/agent.ts';
 
+export { Perf, PerfMonitor, PerfReport, AbResult, Timeline, BrowserWorkload, type PerfConfig, type AbOptions, type AbVariant } from './perf/index.ts';
+export type { PerfTarget, MonitorOptions } from './perf/monitor.ts';
+export type { Budget, BudgetViolation, Regression, PerfSummary, TargetPhaseStats } from './perf/report.ts';
+export type { WorkloadPreset, WorkloadRunOptions } from './perf/workload.ts';
+export { Chaos, type ChaosConfig, type Fault, type ProcessTarget } from './chaos/index.ts';
+export type { ProcInfo, ProcKind, ProcSelector } from './chaos/procs.ts';
+export { NetworkProxy, NETWORK_PROFILES, type NetConditions, type NetworkProfile } from './net/proxy.ts';
+export { Rng } from './core/random.ts';
+
 export { MacOSDriver } from './drivers/macos.ts';
 export type { Driver, PreflightCheck } from './drivers/driver.ts';
 

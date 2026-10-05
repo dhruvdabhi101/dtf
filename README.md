@@ -408,6 +408,27 @@ it saw.
 they arrive, for trying a build by hand. `PostHogServer.start()` is the
 programmatic form.
 
+## Performance and chaos
+
+`ctx.perf` measures what the app costs (CPU, memory, disk, handles, network per
+host) while a scripted user browses in a real Chrome next to it, with phases,
+budgets, saved baselines, A/B runs and an HTML report per recording.
+`ctx.chaos` crashes and freezes its processes, takes the network away or makes
+it slow and lossy, starves CPU and memory, and fills the disk, and it always
+undoes the fault, even if the run dies (a restore journal plus a watchdog).
+
+```ts
+test('survives two minutes offline while recording', async ({ app, perf, chaos }) => {
+  const mon = await perf.monitor([app]);
+  await perf.phase('offline', () => chaos.with(chaos.network.offline(), () => sleep(120_000)));
+  (await mon.stop()).assertBudgets({ phase: 'offline', cpuP95: 50 });
+  await app.tray.shouldExist();
+});
+```
+
+See [docs/PERF_AND_CHAOS.md](docs/PERF_AND_CHAOS.md), and the Worktrace suites in
+`examples/worktrace/perf` and `examples/worktrace/chaos`.
+
 ## CI
 
 These are real GUI tests: they need a logged-in graphical session, not a headless

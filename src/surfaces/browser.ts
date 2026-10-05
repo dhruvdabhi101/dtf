@@ -356,6 +356,15 @@ export class BrowserSurface {
   }
 
   /**
+   * The DevTools connection to a browser from `launchIsolated`, or null when
+   * the browser refused one. For driving the page directly, e.g. the perf
+   * workloads that browse on a schedule.
+   */
+  cdp(session: object): CdpPage | null {
+    return isolated.get(session)?.cdp ?? null;
+  }
+
+  /**
    * The next custom-scheme URL (`scheme://…`) a browser from `launchIsolated`
    * navigated to, such as an OAuth redirect back into the app. Resolves with
    * one already seen. The browser's own "Open <App>?" prompt is left alone:

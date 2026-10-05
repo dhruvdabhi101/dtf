@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+- **Performance testing** (`ctx.perf`): per-process-tree CPU, memory, disk I/O,
+  handles and threads, machine totals, and per-host traffic through a local
+  proxy; phases, budgets, saved baselines, A/B comparisons, a scripted browsing
+  workload in a real Chrome, and a self-contained HTML report per recording.
+- **Chaos testing** (`ctx.chaos`): process crash/kill/suspend (by Electron
+  process type), network offline/latency/throttle/loss/DNS failure/stall/flap
+  through the proxy, the Windows firewall, Wi-Fi or the adapter, OS-level
+  shaping (clumsy, dummynet), CPU stress and caps, memory stress/caps/pressure,
+  disk fill, and seeded random soaks. Machine-wide faults need
+  `--allow-destructive` (or `chaos.allowDestructive` / `DTF_CHAOS_DESTRUCTIVE=1`).
+- A restore journal and per-fault watchdog: faults are undone even when the run
+  crashes. `dtf chaos status|restore`; `dtf run` replays leftovers at start.
+- `networkProxy`, `perf` and `chaos` config; `--allow-destructive` and
+  `--seed` run flags; `dtf perf report`; `dtf doctor` reports chaos readiness.
+- `app.relaunch()` for recovering after a kill, and `app.executable`.
+- Worktrace perf and chaos example suites.
+
+Chaos was exercised against a real Electron app on Windows (Wi-Fi off, CPU
+stress, CPU caps, memory stress). Firewall, adapter and OS-level shaping need an
+elevated terminal; the macOS faults and `ctx.perf` against a real app have had
+less use.
+
 ## 0.3.0
 
 ### Added

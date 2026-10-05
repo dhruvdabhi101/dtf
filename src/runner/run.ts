@@ -9,6 +9,12 @@ import { DesktopApp, appIdentity } from '../app.ts';
 import { sleep } from '../core/wait.ts';
 import { UnsupportedError } from '../core/errors.ts';
 import { PostHogServer } from '../fakes/posthog.ts';
+import { NetworkProxy } from '../net/proxy.ts';
+import { Perf } from '../perf/index.ts';
+import { Timeline } from '../perf/timeline.ts';
+import { Chaos } from '../chaos/index.ts';
+import { restoreStale } from '../chaos/journal.ts';
+import type { LaunchOptions } from '../types.ts';
 import {
   rootSuite, resetRegistry, setCurrentFile, hasOnly,
   type SuiteNode, type TestCase, type TestContext,
@@ -140,6 +146,19 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
 
   await mkdir(artifactsDir, { recursive: true });
 
+  // Faults a crashed earlier run left in place (Wi-Fi off, a firewall rule, a
+  // frozen process) would make this run fail for no reason of its own.
+  for (const { entry, errors } of await restoreStale()) {
+    process.stderr.write(`dtf: restored a fault a previous run left behind: ${entry.description}${errors.length ? ` (with errors: ${errors.join('; ')})` : ''}\n`);
+  }
+
+  const proxy = cfg.networkProxy
+    ? await new NetworkProxy().start(typeof cfg.networkProxy === 'object' ? cfg.networkProxy.port : 0)
+    : null;
+  const withProxy = (o: LaunchOptions): LaunchOptions => (proxy
+    ? { ...o, args: [...proxy.launchArgs(), ...(o.args ?? [])], env: { ...proxy.launchEnv(), ...(o.env ?? {}) } }
+    : o);
+
   const baseDriver = await createDriver();
   const driver = cfg.slowMoMs ? withSlowMo(baseDriver, cfg.slowMoMs) : baseDriver;
   await driver.start();
@@ -147,6 +166,7 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
   const perm = await driver.checkAutomationPermission();
   if (!perm.granted) {
     await driver.stop();
+    await proxy?.stop();
     throw new Error(`Cannot drive the OS: ${perm.detail}\nRun \`dtf doctor\` for a full preflight check.`);
   }
 
@@ -191,7 +211,7 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
       }
     }
     await cfg.beforeLaunch?.();
-    return DesktopApp.launch(driver, cfg.app);
+    return DesktopApp.launch(driver, withProxy(cfg.app), { beforeRelaunch: cfg.beforeLaunch });
   };
 
   const aborted = () => opts.signal?.aborted === true;
@@ -244,6 +264,10 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
         if (cfg.lifecycle === 'per-test') app = await launch();
 
         const attachments: { name: string; body: string }[] = [];
+        const timeline = new Timeline();
+        const perf = new Perf({ driver, timeline, proxy, outDir: join(artifactsDir, 'perf', safeName(test.fullName)), config: cfg.perf });
+        const seed = process.env.DTF_CHAOS_SEED ? Number(process.env.DTF_CHAOS_SEED) : undefined;
+        const chaos = new Chaos({ timeline, proxy, config: cfg.chaos, seed });
         const ctx: TestContext = {
           app: app as DesktopApp,
           driver,
@@ -254,6 +278,9 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
           },
           attach: (name, body) => attachments.push({ name, body }),
           posthog: posthogCtx,
+          perf,
+          chaos,
+          proxy,
         };
         // A test that quits and relaunches the app holds its own instance; on
         // failure that one, not the runner's, is the one worth looking at.
@@ -308,6 +335,24 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
           }
         }
 
+        // Put the machine back before anything else: a failure screenshot of
+        // a frozen app, or the next test on a dead network, helps nobody.
+        try {
+          await chaos.restoreAll();
+        } catch (err) {
+          if (status === 'passed') { status = 'failed'; lastError = err; }
+          attachments.push({ name: 'chaos restore failed', body: err instanceof Error ? err.message : String(err) });
+        }
+        proxy?.reset();
+        if (chaos.log.length) {
+          attachments.push({
+            name: `chaos (seed ${chaos.rng.seed})`,
+            body: chaos.log.map((l) => `${new Date(l.at).toISOString()}  ${l.event.padEnd(7)} ${l.description}`).join('\n'),
+          });
+        }
+        for (const report of await perf.dispose()) {
+          attachments.push({ name: `perf: ${report.data.name}`, body: `${report.table()}\n\nreport: ${report.files.html}` });
+        }
         offLaunch();
         const latest = relaunched.at(-1);
 
@@ -379,7 +424,12 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
 
       for (const suite of [...ranSuites].reverse()) {
         for (const hook of suite.afterAll) {
-          await Promise.resolve(hook({ app: app as DesktopApp, driver, screenshot: async () => '', attach: () => {}, posthog: posthogCtx })).catch(() => {});
+          const timeline = new Timeline();
+          const perf = new Perf({ driver, timeline, proxy, outDir: join(artifactsDir, 'perf', 'afterAll'), config: cfg.perf });
+          const chaos = new Chaos({ timeline, proxy, config: cfg.chaos });
+          await Promise.resolve(hook({ app: app as DesktopApp, driver, screenshot: async () => '', attach: () => {}, posthog: posthogCtx, perf, chaos, proxy })).catch(() => {});
+          await chaos.restoreAll().catch(() => {});
+          await perf.dispose().catch(() => {});
         }
       }
 
@@ -392,6 +442,7 @@ export async function runTests(opts: RunOptions = {}): Promise<RunSummary> {
     if (app) await (app as DesktopApp).close().catch(() => {});
     await posthog?.close();
     await driver.stop();
+    await proxy?.stop();
   }
 
   const summary: RunSummary = {
